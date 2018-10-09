@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 )
 
 // command line arguments
@@ -15,5 +16,6 @@ var (
 
 func main() {
 	flag.Parse()
-	//fmt.Println(*simple)
+
+	fmt.Println("client ran")
 }
