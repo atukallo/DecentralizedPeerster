@@ -4,8 +4,10 @@ import (
 	"flag"
 	"fmt"
 	"github.com/dedis/protobuf"
+	log "github.com/sirupsen/logrus"
 	. "net"
 	"strconv"
+	"strings"
 )
 
 const (
@@ -57,112 +59,149 @@ func initGossiper() (Gossiper, error) {
 
 	g := Gossiper{}
 
-	clientListenAddress := localIp + ":" + strconv.Itoa(*UIPort)
-
-	clientListenUdpAddress, err := ResolveUDPAddr("udp4", clientListenAddress)
-	if err != nil {
-		fmt.Println("Unable to parse clientListenAddress: " + string(clientListenAddress) + ", error is " + err.Error())
-		return g, err
-
-		fmt.Println(clientListenUdpAddress) // todo: tmp
+	{
+		clientListenAddress := localIp + ":" + strconv.Itoa(*UIPort)
+		clientListenUdpAddress, err := ResolveUDPAddr("udp4", clientListenAddress)
+		if err != nil {
+			log.Error("Unable to parse clientListenAddress: " + string(clientListenAddress))
+			return g, err
+		}
+		g.clientAddress = clientListenUdpAddress
 	}
 
-	peersListenAddress := *gossipAddr
-	peersListenUdpAddress, err := ResolveUDPAddr("udp4", peersListenAddress)
-	if err != nil {
-		fmt.Println("Unable to parse peersListenAddress: " + string(peersListenAddress) + ", error is " + err.Error())
-		return g, err
+	{
+		peersListenAddress := *gossipAddr
+		peersListenUdpAddress, err := ResolveUDPAddr("udp4", peersListenAddress)
+		if err != nil {
+			log.Error("Unable to parse peersListenAddress: " + string(peersListenAddress))
+			return g, err
+		}
+		g.peersAddress = peersListenUdpAddress
 	}
-	g.peersAddress = peersListenUdpAddress
 
-	gossiperName := *name
-	if gossiperName == "" {
-		return g, PeersterError{errorMsg: "Empty name provided"}
+	{
+		gossiperName := *name
+		if gossiperName == "" {
+			//return g, models.PeersterError{errorMsg: "Empty name provided"}
+			return models.PeersterError{}
+			// TODO: create common classes + understand GOPATH + GOROOT
+		}
+		g.name = gossiperName
 	}
-	g.name = gossiperName
 
-	// todo: validate peers
+	{
+		peersArr := strings.Split(*peers, ",")
+		for i := 0; i < len(peersArr); i++ {
+			peerAddr, err := ResolveUDPAddr("udp4", peersArr[i])
+			if err != nil {
+				log.Error("Error when parsing peers")
+				return g, err
+			}
+			g.peers = append(g.peers, peerAddr)
+		}
+	}
 
 	// command line arguments parsed, start listening:
-	udpConn, err := ListenUDP("udp4", g.peersAddress)
-	if err != nil {
-		return g, err
+	{
+		peersUdpConn, err := ListenUDP("udp4", g.peersAddress)
+		if err != nil {
+			return g, err
+		}
+		g.peersConnection = peersUdpConn
+
+		clientUdpConn, err := ListenUDP("udp4", g.clientAddress)
+		if err != nil {
+			return g, err
+		}
+		g.clientConnection = clientUdpConn
 	}
-	g.peerConnection = udpConn
 
 	return g, nil
 }
 
 type Gossiper struct {
-	peersAddress   *UDPAddr // peersAddress for peers
-	peerConnection *UDPConn
-	name           string
+	peersAddress    *UDPAddr // peersAddress for peers
+	peersConnection *UDPConn
+
+	clientAddress    *UDPAddr
+	clientConnection *UDPConn
+
+	peers []*UDPAddr
+
+	name string
 }
 
-func (g *Gossiper) startReadingBytes() {
-	fmt.Println("start reading bytes")
-	for i := 0; i < 10; i++ {
-		var buffer = make([]byte, MAX_PACKET_SIZE)
+func (g *Gossiper) startReadingConnection(conn *UDPConn) {
+	localAddress := conn.LocalAddr()
+	log.Info("starting reading bytes on " + localAddress.String())
+	var buffer = make([]byte, MAX_PACKET_SIZE)
 
-		g.peerConnection.ReadFrom(buffer)
 
-		fmt.Println("Read buffer:")
-		//fmt.Println(buffer[0:n])
+	for {
+		n, _, _ := g.peersConnection.ReadFrom(buffer)
+
+		log.Info("Read " + strconv.Itoa(n) + " bytes from " + localAddress.String() + ", decoding...")
 
 		msg := &Message{}
 		err := protobuf.Decode(buffer, msg)
 		if err != nil {
-			fmt.Println("Error is " + err.Error())
+			log.Warn("Unable to decode message, error: " + err.Error())
 		}
 
-		fmt.Println(msg)
+		log.Info("Read message: " + msg.Text)
 	}
 }
 
-func (g *Gossiper) sendMessageTo(addr string) {
-	msg := &Message{Text: "hau hi"}
-	packetBytes, err := protobuf.Encode(msg)
-	if err != nil {
-		fmt.Println(packetBytes)
-		return
-	}
-
-	udpAddr, err := ResolveUDPAddr("udp4", addr)
-
-	fmt.Println("sending message to: " + addr)
-
-	if err != nil {
-		fmt.Println(packetBytes)
-		return
-	}
-
-	fmt.Println(packetBytes)
-
-	g.peerConnection.WriteToUDP(packetBytes, udpAddr)
+func (g *Gossiper) startReadingPeers() {
+	log.Info("starting reading bytes from peers on " + g.peersAddress.String())
+	g.startReadingConnection(g.peersConnection)
 }
+
+
+func (g *Gossiper) startReadingClient() {
+	log.Info("starting reading bytes from peers on " + g.clientAddress.String())
+	g.startReadingConnection(g.clientConnection)
+}
+
+//func (g *Gossiper) sendMessageTo(addr string) {
+//	msg := &Message{Text: "hau hi"}
+//	packetBytes, err := protobuf.Encode(msg)
+//	if err != nil {
+//		fmt.Println(packetBytes)
+//		return
+//	}
+//
+//	udpAddr, err := ResolveUDPAddr("udp4", addr)
+//
+//	fmt.Println("sending message to: " + addr)
+//
+//	if err != nil {
+//		fmt.Println(packetBytes)
+//		return
+//	}
+//
+//	fmt.Println(packetBytes)
+//
+//	g.peerConnection.WriteToUDP(packetBytes, udpAddr)
+//}
 
 func main() {
 	g, err := initGossiper()
 	if err != nil {
-		fmt.Println("gossiper failed to construct itself with error: " + err.Error())
+		log.Fatal("gossiper failed to construct itself with error: " + err.Error())
 		return
 	}
 
-	if *additional != "" {
-		// than additional is ip address of where to send
-		g.sendMessageTo(*additional)
-	} else {
-		// passive mode
-		g.startReadingBytes() // locking operation
-	}
+	//if *additional != "" {
+	//	// than additional is ip address of where to send
+	//	g.sendMessageTo(*additional)
+	//} else {
+	//	// passive mode
+	//	g.startReadingBytes() // locking operation
+	//}
 
-	fmt.Println("gossiper ran")
-}
+	go g.startReadingPeers()
+	g.startReadingClient() // goroutine dies, when app dies, so blocking function is called in main thread
 
-type PeersterError struct {
-	errorMsg string
-}
-
-func (e PeersterError) Error() string {
-	return e.errorMsg
+	fmt.Println("gossiper finished")
 }
