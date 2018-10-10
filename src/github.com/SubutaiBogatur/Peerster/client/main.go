@@ -55,14 +55,12 @@ type Client struct {
 }
 
 func (c *Client) sendMessageToGossiper(message string, gossiperPort *int) {
-	msg := &SimpleMessage{OriginalName: "atukallo_client", RelayPeerAddr:c.gossiperListenConnection.LocalAddr().String(), Contents:message}
+	msg := &ClientMessage{Text:message}
 	packetBytes, err := protobuf.Encode(msg)
 	if err != nil {
 		logger.Error("unable to send msg: " + err.Error())
 		return
 	}
-
-	fmt.Println(msg.OriginalName)
 
 	gossiperAddr, err := ResolveUDPAddr("udp4", LocalIp+":"+strconv.Itoa(*gossiperPort))
 	if err != nil {

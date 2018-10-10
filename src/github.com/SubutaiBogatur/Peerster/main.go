@@ -7,9 +7,11 @@ import (
 	. "github.com/SubutaiBogatur/Peerster/utils"
 	"github.com/dedis/protobuf"
 	log "github.com/sirupsen/logrus"
+	"math/rand"
 	. "net"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // command line arguments
@@ -28,7 +30,7 @@ var (
 func initGossiper() (Gossiper, error) {
 	flag.Parse()
 
-	g := Gossiper{}
+	g := Gossiper{messageStorage: &MessageStorage{VectorClock: make(map[string]uint32), Messages: make(map[string][]*RumorMessage)}}
 
 	{
 		clientListenAddress := LocalIp + ":" + strconv.Itoa(*UIPort)
@@ -102,39 +104,51 @@ type Gossiper struct {
 
 	peers []*UDPAddr
 
+	messageStorage *MessageStorage
+
 	name string
 }
 
-func (g *Gossiper) startReadingConnection(conn *UDPConn, printCallback func(gp *GossipPacket)) {
+// todo: add synchronization, because MessageStorage is definitely not-concurrent safe
+func (g *Gossiper) startReadingConnection(conn *UDPConn, isClient bool) {
 	localAddress := conn.LocalAddr()
 	logger.Info("starting reading bytes on " + localAddress.String())
 	var buffer = make([]byte, MAX_PACKET_SIZE)
 
 	for {
-		n, _, _ := conn.ReadFrom(buffer)
+		n, senderAddr, _ := conn.ReadFromUDP(buffer)
+		g.updatePeers(senderAddr)
 
 		logger.Debug("read " + strconv.Itoa(n) + " bytes from " + localAddress.String() + ", decoding...")
 
-		msg := &SimpleMessage{}
-		err := protobuf.Decode(buffer, msg)
-		if err != nil {
-			logger.Warn("unable to decode message, error: " + err.Error())
+		if isClient {
+			cmsg := &ClientMessage{}
+			if err := protobuf.Decode(buffer, cmsg); err != nil {
+				logger.Warn("unable to decode message, error: " + err.Error())
+			}
+			g.processClientMessage(cmsg)
+		} else {
+			gp := &GossipPacket{}
+			if err := protobuf.Decode(buffer, gp); err != nil {
+				logger.Warn("unable to decode message, error: " + err.Error())
+			}
+
+			if gp.Rumor != nil {
+				g.processRumorMessage(gp.Rumor, senderAddr)
+			} else if gp.Status != nil {
+				g.processStatusPacket(gp.Status, senderAddr)
+			} else if gp.Simple != nil {
+				g.processStatusPacket(gp.Status, senderAddr)
+			} else {
+				log.Error("unable to parse gossip packet! All fields are empty")
+			}
 		}
 
-		logger.Info("read message from " + msg.RelayPeerAddr)
-		logger.Debug("message is: " + msg.Contents)
-
-		gp := &GossipPacket{Simple: msg}
-		printCallback(gp)
-
-		// not good cmp
-		g.broadcastPacket(gp, conn.LocalAddr().String() == g.clientConnection.LocalAddr().String())
-		logger.Info("Message processing is done")
+		logger.Info("message processing is done")
 	}
 }
 
-// conn is passed to understand if the packet came from client or from peer
-func (g *Gossiper) broadcastPacket(gp *GossipPacket, isFromClient bool) {
+func (g *Gossiper) processGossipPacket(gp *GossipPacket, isFromClient bool) {
 	osmsg := *gp.Simple // original
 	nsmsg := osmsg      // new
 	nsmsg.RelayPeerAddr = g.peersConnection.LocalAddr().String()
@@ -162,21 +176,74 @@ func (g *Gossiper) broadcastPacket(gp *GossipPacket, isFromClient bool) {
 	}
 }
 
+func (g *Gossiper) processClientMessage(cmsg *ClientMessage) {
+	rmsg := &RumorMessage{OriginalName: g.name, ID: g.messageStorage.GetNextMessageId(g.name), Text: cmsg.Text}
+	g.processRumorMessage(rmsg, nil)
+}
+
+func (g *Gossiper) processRumorMessage(rmsg *RumorMessage, senderAddr *UDPAddr) {
+	isNewMessage := g.messageStorage.ProcessRumorMessage(rmsg)
+
+	if isNewMessage {
+		// rumormongering -- choose random peer to send rmsg to
+		randomInt := rand.Int31n(int32(len(g.peers))) // end not inclusive
+		randomPeer := g.peers[randomInt]
+		g.sendRumourMessage(rmsg, randomPeer)
+	} else {
+		// todo
+	}
+
+}
+
+func (g *Gossiper) processStatusPacket(sp *StatusPacket, senderAddr *UDPAddr) {
+}
+
+func (g *Gossiper) processSimpleMessage(smsg *SimpleMessage) {
+
+}
+
+func (g *Gossiper) updatePeers(peer *UDPAddr) {
+	// todo: change peers to set
+
+	if peer == nil {
+		return
+	}
+
+	for i := 0; i < len(g.peers); i++ {
+		// todo: bad cmp
+		if g.peers[i].String() == peer.String() {
+			return // peer is a known one
+		}
+	}
+
+	g.peers = append(g.peers, peer)
+}
+
+func (g* Gossiper) sendRumourMessage(rmsg *RumorMessage, addr *UDPAddr) {
+	log.Info("sending rumour message with text: " + rmsg.Text)
+	g.sendData(rmsg, addr)
+}
+
 func (g *Gossiper) sendSimpleMessage(smsg *SimpleMessage, addr *UDPAddr) {
-	packetBytes, err := protobuf.Encode(smsg)
+	log.Info("sending simple message with text: " + smsg.Text)
+	g.sendData(smsg, addr)
+}
+
+func (g *Gossiper) sendData(data interface{}, addr *UDPAddr) {
+	packetBytes, err := protobuf.Encode(data)
 	if err != nil {
-		logger.Error("client - unable to send msg: " + err.Error())
+		logger.Error("unable to send msg: " + err.Error())
 		return
 	}
 
 	logger.Info("sending message from " + g.peersConnection.LocalAddr().String() + " to " + addr.String())
-	logger.Debug("msg is: " + string(smsg.Contents))
 
 	n, err := g.peersConnection.WriteToUDP(packetBytes, addr)
 	if err != nil {
 		logger.Error("error when writing to connection: " + err.Error() + " n is " + strconv.Itoa(n))
 	}
 }
+
 
 func (g *Gossiper) startReadingPeers() {
 	logger.Info("starting reading bytes from peers on " + g.peersAddress.String())

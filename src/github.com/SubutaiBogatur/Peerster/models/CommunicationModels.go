@@ -6,17 +6,36 @@ import (
 )
 
 type SimpleMessage struct {
-	OriginalName  string // name of original sender (why not peersAddress?)
-	RelayPeerAddr string // peersAddress of last retranslator in the form ip:port
-	Contents      string
+	OriginalName  string // name of original gossiper sender
+	RelayPeerAddr string // address of latest peer retranslator in the form ip:port
+	Text          string
 }
 
-//type Message struct {
-//	Text string
-//}
+type RumorMessage struct {
+	OriginalName string // name of original gossiper sender
+	ID           uint32 // id assigned by original sender ie counter per sender
+	Text         string
+}
 
+// depicts gossiper's information about another peer
+type PeerStatus struct {
+	Identifier string
+	NextID     uint32
+}
+
+type StatusPacket struct {
+	Want []PeerStatus // vector clock
+}
+
+// the invariant on the packet is that only one of the fields is not nil
 type GossipPacket struct {
 	Simple *SimpleMessage
+	Rumor  *RumorMessage
+	Status *StatusPacket
+}
+
+type ClientMessage struct {
+	Text string
 }
 
 func (gp *GossipPacket) PrintClientPacket(knownPeers []*net.UDPAddr) {
@@ -31,9 +50,9 @@ func (gp *GossipPacket) printPackage(knownPeers []*net.UDPAddr, isFromClient boo
 	var smsg *SimpleMessage = gp.Simple
 
 	if isFromClient {
-		fmt.Println("CLIENT MESSAGE " + smsg.Contents)
+		fmt.Println("CLIENT MESSAGE " + smsg.Text)
 	} else {
-		fmt.Println("SIMPLE MESSAGE origin " + smsg.OriginalName + " from " + smsg.RelayPeerAddr + " contents " + smsg.Contents)
+		fmt.Println("SIMPLE MESSAGE origin " + smsg.OriginalName + " from " + smsg.RelayPeerAddr + " contents " + smsg.Text)
 	}
 
 	fmt.Print("PEERS ")
