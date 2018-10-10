@@ -1,6 +1,9 @@
 package models
 
-import "fmt"
+import (
+	"fmt"
+	"net"
+)
 
 type SimpleMessage struct {
 	OriginalName  string // name of original sender (why not peersAddress?)
@@ -8,17 +11,24 @@ type SimpleMessage struct {
 	Contents      string
 }
 
-type Message struct {
-	Text string
-}
+//type Message struct {
+//	Text string
+//}
 
 type GossipPacket struct {
 	Simple *SimpleMessage
 }
 
+func (gp *GossipPacket) PrintClientPacket(knownPeers []*net.UDPAddr) {
+	gp.printPackage(knownPeers, true)
+}
 
-func printPackage(pckg *GossipPacket, isFromClient bool) {
-	var smsg *SimpleMessage = pckg.Simple
+func (gp *GossipPacket) PrintPeerPacket(knownPeers []*net.UDPAddr) {
+	gp.printPackage(knownPeers, false)
+}
+
+func (gp *GossipPacket) printPackage(knownPeers []*net.UDPAddr, isFromClient bool) {
+	var smsg *SimpleMessage = gp.Simple
 
 	if isFromClient {
 		fmt.Println("CLIENT MESSAGE " + smsg.Contents)
@@ -26,6 +36,13 @@ func printPackage(pckg *GossipPacket, isFromClient bool) {
 		fmt.Println("SIMPLE MESSAGE origin " + smsg.OriginalName + " from " + smsg.RelayPeerAddr + " contents " + smsg.Contents)
 	}
 
-	fmt.Println("PEERS todo:")
-	//fmt.Println(allPeers)
+	fmt.Print("PEERS ")
+	for i := 0; i < len(knownPeers); i++ {
+		if i == len(knownPeers)-1 {
+			fmt.Print(knownPeers[i].String())
+		} else {
+			fmt.Print(knownPeers[i].String() + ",")
+		}
+	}
+	fmt.Println("")
 }
