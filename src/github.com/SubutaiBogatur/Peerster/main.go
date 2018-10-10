@@ -127,15 +127,21 @@ func (g *Gossiper) startReadingConnection(conn *UDPConn, printCallback func(gp *
 		gp := &GossipPacket{Simple: msg}
 		printCallback(gp)
 
-		g.broadcastPacket(gp)
+		// not good cmp
+		g.broadcastPacket(gp, conn.LocalAddr().String() == g.clientConnection.LocalAddr().String())
 		logger.Info("Message processing is done")
 	}
 }
 
-func (g *Gossiper) broadcastPacket(gp *GossipPacket) {
+// conn is passed to understand if the packet came from client or from peer
+func (g *Gossiper) broadcastPacket(gp *GossipPacket, isFromClient bool) {
 	osmsg := *gp.Simple // original
 	nsmsg := osmsg      // new
 	nsmsg.RelayPeerAddr = g.peersConnection.LocalAddr().String()
+
+	if isFromClient {
+		nsmsg.OriginalName = g.name
+	}
 
 	relayPeer := osmsg.RelayPeerAddr
 	relayPeerAddr, _ := ResolveUDPAddr("udp4", relayPeer)
@@ -143,7 +149,7 @@ func (g *Gossiper) broadcastPacket(gp *GossipPacket) {
 	peerIsKnown := false
 	for i := 0; i < len(g.peers); i++ {
 		// not good cmp
-		if g.peers[i].String() == relayPeerAddr.String() {
+		if g.peers[i].String() == relayPeerAddr.String() && !isFromClient {
 			peerIsKnown = true
 			continue // not broadcasting him anything
 		}
@@ -151,7 +157,7 @@ func (g *Gossiper) broadcastPacket(gp *GossipPacket) {
 		g.sendSimpleMessage(&nsmsg, g.peers[i])
 	}
 
-	if !peerIsKnown {
+	if !peerIsKnown && !isFromClient {
 		g.peers = append(g.peers, relayPeerAddr)
 	}
 }

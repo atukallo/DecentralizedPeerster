@@ -42,7 +42,10 @@ done
 sleep 3
 pkill -f Peerster
 
+
+sleep 1
 echo " --- starting testing --- "
+sleep 5
 
 
 #testing
@@ -99,6 +102,7 @@ done
 if [[ "$failed" == "T" ]] ; then
     echo -e "${RED}***FAILED***${NC}"
 else
+        echo "From the second sight you're also not a lox, my respekt"
 	echo "***PASSED***"
 fi
 

@@ -2,3 +2,6 @@
 build/
 pkg
 *.out
+
+src/github.com/SubutaiBogatur/Peerster/Peerster
+src/github.com/SubutaiBogatur/Peerster/client/client
