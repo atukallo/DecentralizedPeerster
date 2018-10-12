@@ -34,7 +34,7 @@ var (
 	UIPort     = flag.Int("UIPort", 4848, "Port, where gossiper listens for client. Client is situated on the same machine, so gossiper listens to "+LocalIp+":port for client")
 	gossipAddr = flag.String("gossipAddr", "127.0.0.1:1212", "Address, where gossiper is launched: ip:port. Other peers will contact gossiper through this peersAddress")
 	name       = flag.String("name", "go_rbachev", "Gossiper name")
-	peers      = flag.String("peers", "127.0.0.1:1212", "Other gossipers' addresses separated with \",\" in the form ip:port")
+	peers      = flag.String("peers", "127.0.0.1:1213", "Other gossipers' addresses separated with \",\" in the form ip:port")
 	simple     = flag.Bool("simple", true, "True, if mode is simple")
 
 	additional = flag.String("additional", "", "additional info")
@@ -59,65 +59,55 @@ func initGossiper() (Gossiper, error) {
 
 	g := Gossiper{messageStorage: &MessageStorage{VectorClock: make(map[string]uint32), Messages: make(map[string][]*RumorMessage)}}
 
-	{
-		clientListenAddress := LocalIp + ":" + strconv.Itoa(*UIPort)
-		clientListenUdpAddress, err := ResolveUDPAddr("udp4", clientListenAddress)
+	clientListenAddress := LocalIp + ":" + strconv.Itoa(*UIPort)
+	clientListenUdpAddress, err := ResolveUDPAddr("udp4", clientListenAddress)
+	if err != nil {
+		logger.Error("Unable to parse clientListenAddress: " + string(clientListenAddress))
+		return g, err
+	}
+	g.clientAddress = clientListenUdpAddress
+
+	peersListenAddress := *gossipAddr
+	peersListenUdpAddress, err := ResolveUDPAddr("udp4", peersListenAddress)
+	if err != nil {
+		logger.Error("Unable to parse peersListenAddress: " + string(peersListenAddress))
+		return g, err
+	}
+	g.peersAddress = peersListenUdpAddress
+	logger = logger.WithField("a", peersListenUdpAddress.String())
+
+	gossiperName := *name
+	if gossiperName == "" {
+		return g, PeersterError{ErrorMsg: "Empty name provided"}
+	}
+	g.name = gossiperName
+
+	peersArr := strings.Split(*peers, ",")
+	for i := 0; i < len(peersArr); i++ {
+		if peersArr[i] == "" {
+			continue
+		}
+
+		peerAddr, err := ResolveUDPAddr("udp4", peersArr[i])
 		if err != nil {
-			logger.Error("Unable to parse clientListenAddress: " + string(clientListenAddress))
+			logger.Error("Error when parsing peers")
 			return g, err
 		}
-		g.clientAddress = clientListenUdpAddress
-	}
-
-	{
-		peersListenAddress := *gossipAddr
-		peersListenUdpAddress, err := ResolveUDPAddr("udp4", peersListenAddress)
-		if err != nil {
-			logger.Error("Unable to parse peersListenAddress: " + string(peersListenAddress))
-			return g, err
-		}
-		g.peersAddress = peersListenUdpAddress
-		logger = logger.WithField("a", peersListenUdpAddress.String())
-	}
-
-	{
-		gossiperName := *name
-		if gossiperName == "" {
-			return g, PeersterError{ErrorMsg: "Empty name provided"}
-		}
-		g.name = gossiperName
-	}
-
-	{
-		peersArr := strings.Split(*peers, ",")
-		for i := 0; i < len(peersArr); i++ {
-			if peersArr[i] == "" {
-				continue
-			}
-
-			peerAddr, err := ResolveUDPAddr("udp4", peersArr[i])
-			if err != nil {
-				logger.Error("Error when parsing peers")
-				return g, err
-			}
-			g.peers = append(g.peers, peerAddr)
-		}
+		g.peers = append(g.peers, peerAddr)
 	}
 
 	// command line arguments parsed, start listening:
-	{
-		peersUdpConn, err := ListenUDP("udp4", g.peersAddress)
-		if err != nil {
-			return g, err
-		}
-		g.peersConnection = peersUdpConn
-
-		clientUdpConn, err := ListenUDP("udp4", g.clientAddress)
-		if err != nil {
-			return g, err
-		}
-		g.clientConnection = clientUdpConn
+	peersUdpConn, err := ListenUDP("udp4", g.peersAddress)
+	if err != nil {
+		return g, err
 	}
+	g.peersConnection = peersUdpConn
+
+	clientUdpConn, err := ListenUDP("udp4", g.clientAddress)
+	if err != nil {
+		return g, err
+	}
+	g.clientConnection = clientUdpConn
 
 	return g, nil
 }
@@ -197,7 +187,7 @@ func (g *Gossiper) startPeerWriter() {
 			continue
 		}
 
-		logger.Info("sending message from " + g.peersConnection.LocalAddr().String() + " to " + address.String())
+		logger.Debug("sending message from " + g.peersConnection.LocalAddr().String() + " to " + address.String())
 
 		n, err := g.peersConnection.WriteToUDP(packetBytes, address)
 		if err != nil {
@@ -217,16 +207,17 @@ func (g *Gossiper) startMessageProcessor() {
 	for {
 		select {
 		case cmsg := <-clientMessagesToProcess:
-			logger.Info("got client message from channel: " + cmsg.Text)
+			logger.Debug("got client message from channel: " + cmsg.Text)
 			g.processClientMessage(cmsg)
 		case agp := <-peerMessagesToProcess:
-			logger.Info("got peer message from channel")
+			logger.Debug("got peer message from channel")
 			g.processAddressedGossipPacket(agp)
 		}
 	}
 }
 
 func (g *Gossiper) processClientMessage(cmsg *ClientMessage) {
+	logger.Info("got client message: " + cmsg.Text)
 	messageId := g.messageStorage.GetNextMessageId(g.name)
 	rmsg := &RumorMessage{OriginalName: g.name, ID: messageId, Text: cmsg.Text}
 	g.processRumorMessage(rmsg)
@@ -239,10 +230,13 @@ func (g *Gossiper) processAddressedGossipPacket(agp *AddressedGossipPacket) {
 	g.updatePeersIfNeeded(address)
 
 	if gp.Rumor != nil {
+		logger.Info("got rumor-msg " + gp.Rumor.String() + " from " + address.String())
 		g.processAddressedRumorMessage(gp.Rumor, address)
 	} else if gp.Status != nil {
+		logger.Info("got status from " + address.String())
 		g.processAddressedStatusPacket(gp.Status, address)
 	} else if gp.Simple != nil {
+		logger.Info("got simple from " + address.String())
 		logger.Warn("someone is sending simple messages, ahahahah")
 	}
 }
@@ -348,6 +342,12 @@ func (g *Gossiper) startRumorMongeringThread(messageBeingRumored *RumorMessage, 
 	select {
 	case <-ticker.C:
 		logger.Info("peer " + peer.String() + " exceeded the timeout")
+
+		// clean the map
+		statusesChannelMux.Lock()
+		delete(statusesChannels, peer.String())
+		statusesChannelMux.Unlock()
+
 		g.flipRumorMongeringCoin(messageBeingRumored)
 	case statusPacket := <-ch:
 		logger.Info("peer " + peer.String() + " sent status as response")
@@ -376,9 +376,10 @@ func (g *Gossiper) startRumorMongeringThread(messageBeingRumored *RumorMessage, 
 func (g *Gossiper) flipRumorMongeringCoin(messageBeingRumored *RumorMessage) {
 	continueMongering := (rand.Int() % 2) == 0
 	if continueMongering {
+		logger.Info("coin says to continue rumor-mongering")
 		g.spreadTheRumor(messageBeingRumored, nil)
 	} else {
-		logger.Info("finished mongering of " + messageBeingRumored.String())
+		logger.Info("coin says to stop rumor-mongering of " + messageBeingRumored.String())
 	}
 }
 
@@ -392,6 +393,9 @@ func main() {
 		logger.Fatal("gossiper failed to construct itself with error: " + err.Error())
 		return
 	}
+
+	// set random seed
+	rand.Seed(time.Now().Unix())
 
 	go g.startClientReader()
 	go g.startPeerReader()
