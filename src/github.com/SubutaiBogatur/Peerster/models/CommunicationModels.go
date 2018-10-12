@@ -3,9 +3,10 @@ package models
 import (
 	"fmt"
 	"net"
+	"strconv"
 )
 
-type AdressedGossipPacket struct {
+type AddressedGossipPacket struct {
 	Packet  *GossipPacket
 	Address *net.UDPAddr
 }
@@ -41,6 +42,10 @@ type PeerStatus struct {
 
 type ClientMessage struct {
 	Text string
+}
+
+func (rmsg *RumorMessage) String() string {
+	return rmsg.OriginalName + ":" + strconv.Itoa(int(rmsg.ID))
 }
 
 func (gp *GossipPacket) PrintClientPacket(knownPeers []*net.UDPAddr) {

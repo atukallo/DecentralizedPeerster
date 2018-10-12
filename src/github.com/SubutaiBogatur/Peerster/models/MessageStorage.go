@@ -3,21 +3,29 @@ package models
 import (
 	log "github.com/sirupsen/logrus"
 	"strconv"
+	"sync"
 )
 
-// todo: add hard sync here
-
+// struct is thread-safe, because it uses hard synchronization
 type MessageStorage struct {
 	// invariant: VectorClock[name] = len(Messages[name])
 	VectorClock map[string]uint32          // stores nextId value
 	Messages    map[string][]*RumorMessage // string -> (array of RumorMessages, where array index is ID)
+
+	mux sync.Mutex
 }
 
 func (ms *MessageStorage) GetNextMessageId(name string) uint32 {
+	ms.mux.Lock()
+	defer ms.mux.Unlock()
+
 	return ms.VectorClock[name] // 0 if not found or value
 }
 
 func (ms *MessageStorage) GetCurrentStatusPacket() *StatusPacket {
+	ms.mux.Lock()
+	defer ms.mux.Unlock()
+
 	want := make([]PeerStatus, len(ms.VectorClock))
 	for name, nextId := range ms.VectorClock {
 		want = append(want, PeerStatus{Identifier: name, NextID: nextId})
@@ -29,6 +37,9 @@ func (ms *MessageStorage) GetCurrentStatusPacket() *StatusPacket {
 // returns (rmsg this peer has and another peer doesn't, does other peer has something new for this peer)
 // if return[0] != nil, return[1] is not guaranteed
 func (ms *MessageStorage) Diff(sp *StatusPacket) (*RumorMessage, bool) {
+	ms.mux.Lock()
+	defer ms.mux.Unlock()
+
 	otherHasThisDoesnt := false
 
 	for _, peerStatus := range sp.Want {
@@ -48,6 +59,9 @@ func (ms *MessageStorage) Diff(sp *StatusPacket) (*RumorMessage, bool) {
 }
 
 func (ms *MessageStorage) AddRumorMessage(rmsg *RumorMessage) bool {
+	ms.mux.Lock()
+	defer ms.mux.Unlock()
+
 	name := rmsg.OriginalName
 
 	if ms.Messages[name] == nil {

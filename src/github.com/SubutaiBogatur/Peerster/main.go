@@ -42,8 +42,8 @@ var (
 	logger = log.WithField("bin", "gos")
 
 	clientMessagesToProcess = make(chan *ClientMessage)
-	peerMessagesToProcess   = make(chan *AdressedGossipPacket)
-	peerMessagesToSend      = make(chan *AdressedGossipPacket)
+	peerMessagesToProcess   = make(chan *AddressedGossipPacket)
+	peerMessagesToSend      = make(chan *AddressedGossipPacket)
 
 	// map is accessed from message-processor and from rumor-mongering threads, should be converted to sync.Map{}
 	statusesChannels   = make(map[string]chan *StatusPacket) // peerIp -> channel, where rumor-mongering goroutine is waiting for status feedback
@@ -51,7 +51,7 @@ var (
 )
 
 const (
-	RUMOR_TIMEOUT = time.Second
+	RumorTimeout = time.Second
 )
 
 func initGossiper() (Gossiper, error) {
@@ -63,7 +63,7 @@ func initGossiper() (Gossiper, error) {
 		clientListenAddress := LocalIp + ":" + strconv.Itoa(*UIPort)
 		clientListenUdpAddress, err := ResolveUDPAddr("udp4", clientListenAddress)
 		if err != nil {
-			log.Error("Unable to parse clientListenAddress: " + string(clientListenAddress))
+			logger.Error("Unable to parse clientListenAddress: " + string(clientListenAddress))
 			return g, err
 		}
 		g.clientAddress = clientListenUdpAddress
@@ -129,16 +129,18 @@ type Gossiper struct {
 	clientAddress    *UDPAddr
 	clientConnection *UDPConn
 
-	peers []*UDPAddr // accessed from message-processor, mb synchr is needed
+	peers         []*UDPAddr // accessed from message-processor and from rumor-mongering
+	peersSliceMux sync.Mutex
 
-	messageStorage *MessageStorage // accessed from message-processor mb synchr is needed
+	messageStorage *MessageStorage // accessed from message-processor and from rumor-mongering, is hard-synchronized
 
 	name string
 }
 
+// client-reader thread
 func (g *Gossiper) startClientReader() {
 	logger.Info("starting reading bytes on client: " + g.clientAddress.String())
-	var buffer = make([]byte, MAX_PACKET_SIZE)
+	var buffer = make([]byte, MaxPacketSize)
 
 	for {
 		g.clientConnection.ReadFromUDP(buffer)
@@ -149,15 +151,16 @@ func (g *Gossiper) startClientReader() {
 		}
 
 		// ~~~ put into channel ~~~
-		log.Debug("put client message into channel")
+		logger.Debug("put client message into channel")
 		clientMessagesToProcess <- cmsg
 		// ~~~~~~~~~~~~~~~~~~~~~~~~
 	}
 }
 
+// peer-reader thread
 func (g *Gossiper) startPeerReader() {
-	logger.Info("starting reading bytes on peer: " + g.clientAddress.String())
-	var buffer = make([]byte, MAX_PACKET_SIZE)
+	logger.Info("starting reading bytes on peer: " + g.peersAddress.String())
+	var buffer = make([]byte, MaxPacketSize)
 
 	for {
 		_, addr, _ := g.peersConnection.ReadFromUDP(buffer)
@@ -167,17 +170,18 @@ func (g *Gossiper) startPeerReader() {
 			logger.Warn("unable to decode message, error: " + err.Error())
 		}
 
-		apg := &AdressedGossipPacket{Address: addr, Packet: gp}
+		apg := &AddressedGossipPacket{Address: addr, Packet: gp}
 
 		// ~~~ put into channel ~~~
-		log.Debug("put peer message into channel")
+		logger.Debug("put peer message into channel")
 		peerMessagesToProcess <- apg
 		// ~~~~~~~~~~~~~~~~~~~~~~~~
 	}
 }
 
+// peer-writer thread
 func (g *Gossiper) startPeerWriter() {
-	log.Info("starting peer writer thread")
+	logger.Info("starting peer writer thread")
 
 	for {
 		// ~~~ read from channel ~~~
@@ -213,10 +217,10 @@ func (g *Gossiper) startMessageProcessor() {
 	for {
 		select {
 		case cmsg := <-clientMessagesToProcess:
-			log.Info("got client message from channel: " + cmsg.Text)
+			logger.Info("got client message from channel: " + cmsg.Text)
 			g.processClientMessage(cmsg)
 		case agp := <-peerMessagesToProcess:
-			log.Info("got peer message from channel")
+			logger.Info("got peer message from channel")
 			g.processAddressedGossipPacket(agp)
 		}
 	}
@@ -228,7 +232,7 @@ func (g *Gossiper) processClientMessage(cmsg *ClientMessage) {
 	g.processRumorMessage(rmsg)
 }
 
-func (g *Gossiper) processAddressedGossipPacket(agp *AdressedGossipPacket) {
+func (g *Gossiper) processAddressedGossipPacket(agp *AddressedGossipPacket) {
 	gp := agp.Packet
 	address := agp.Address
 
@@ -239,28 +243,47 @@ func (g *Gossiper) processAddressedGossipPacket(agp *AdressedGossipPacket) {
 	} else if gp.Status != nil {
 		g.processAddressedStatusPacket(gp.Status, address)
 	} else if gp.Simple != nil {
-		log.Warn("someone is sending simple messages, ahahahah")
+		logger.Warn("someone is sending simple messages, ahahahah")
 	}
 }
 
-func (g *Gossiper) processAddressedStatusPacket(smsg *StatusPacket, address *UDPAddr) {
-	// todo
+func (g *Gossiper) processAddressedStatusPacket(sp *StatusPacket, address *UDPAddr) {
+	statusesChannelMux.Lock()
+	if val, isPresent := statusesChannels[address.String()]; isPresent {
+		logger.Info("got status from map, okidoki")
+		val <- sp // here is a small non-critical race condition (the sp we write may not be read at all, if the eating goroutine has not cleaned the map yet)
+		statusesChannelMux.Unlock()
+		return
+	}
+	statusesChannelMux.Unlock()
+
+	logger.Info("got status not from map, interesting")
+	rmsg, otherHasSomethingNew := g.messageStorage.Diff(sp)
+	if rmsg != nil {
+		g.spreadTheRumor(rmsg, address)
+	} else if otherHasSomethingNew {
+		agp := &AddressedGossipPacket{Packet: &GossipPacket{Status: g.messageStorage.GetCurrentStatusPacket()}, Address: address}
+		peerMessagesToSend <- agp
+	}
+	// else do nothing at all
 }
 
 func (g *Gossiper) processAddressedRumorMessage(rmsg *RumorMessage, address *UDPAddr) {
-	g.updatePeersIfNeeded(address)
 
-	// send status back to rumorer
+	// send status back to rumorer:
 	feedbackStatus := &GossipPacket{Status: g.messageStorage.GetCurrentStatusPacket()}
-	addressedFeedbackStatus := &AdressedGossipPacket{Address: address, Packet: feedbackStatus}
+	addressedFeedbackStatus := &AddressedGossipPacket{Address: address, Packet: feedbackStatus}
+	logger.Info("sending status as feedback to " + address.String())
 	peerMessagesToSend <- addressedFeedbackStatus
 
 	g.processRumorMessage(rmsg)
 }
 
 func (g *Gossiper) updatePeersIfNeeded(peer *UDPAddr) {
+	g.peersSliceMux.Lock()
+	defer g.peersSliceMux.Unlock()
+
 	for i := 0; i < len(g.peers); i++ {
-		// bad cmp
 		if g.peers[i].String() == peer.String() {
 			return // peer is a known one
 		}
@@ -268,54 +291,100 @@ func (g *Gossiper) updatePeersIfNeeded(peer *UDPAddr) {
 	g.peers = append(g.peers, peer)
 }
 
-// can be called from client-listener & main thread
 func (g *Gossiper) processRumorMessage(rmsg *RumorMessage) {
 	isNewMessage := g.messageStorage.AddRumorMessage(rmsg)
 
 	if isNewMessage {
 		// rumormongering -- choose random peer to send rmsg to
-		if len(g.peers) == 0 {
+		if len(g.peers) == 0 { // access without sync, but nothing can go wrong
 			return // msg came from client and no peers are known
 		}
 
-		g.spreadTheRumor(rmsg)
+		g.spreadTheRumor(rmsg, nil)
 	} else {
-		// todo
+		// if we got an old rumor, then let's do nothing, we already have sent a feedback, everything is good
+		logger.Info("message is not new, skipping it")
 	}
 
-}
-
-func (g *Gossiper) spreadTheRumor(rmsg *RumorMessage) {
-	randomInt := rand.Int31n(int32(len(g.peers))) // end not inclusive
-	randomPeer := g.peers[randomInt]
-
-	statusesChannelMux.Lock()
-	if _, contains := statusesChannels[randomPeer.String()]; contains {
-		log.Warn("rumormongering with this peer is already in progress, this case is too hard for me")
-		return
-	}
-	ch := make(chan *StatusPacket)
-	statusesChannels[randomPeer.String()] = ch
-	statusesChannelMux.Unlock()
-
-	peerMessagesToSend <- &AdressedGossipPacket{Address: randomPeer, Packet: &GossipPacket{Rumor: rmsg}}
-
-	go g.startRumorMongeringThread(rmsg, ch)
 }
 
 // -------------------------------------------
 // end of message-processor thread section
 // -------------------------------------------
 
-func (g *Gossiper) startRumorMongeringThread(messageBeingRumored *RumorMessage, ch chan *StatusPacket) {
-	ticker := time.NewTicker(RUMOR_TIMEOUT)
+// called both by message-processor and rumor-mongering threads
+// if peer is nil, choose random peer
+func (g *Gossiper) spreadTheRumor(rmsg *RumorMessage, peer *UDPAddr) {
+
+	if peer == nil {
+		g.peersSliceMux.Lock()
+		randomInt := rand.Int31n(int32(len(g.peers))) // end not inclusive
+		peer = g.peers[randomInt]
+		g.peersSliceMux.Unlock()
+	}
+
+	statusesChannelMux.Lock()
+	if _, contains := statusesChannels[peer.String()]; contains {
+		logger.Warn("rumormongering with this peer is already in progress, this case is too hard for me")
+		statusesChannelMux.Unlock()
+		return
+	}
+	ch := make(chan *StatusPacket)
+	statusesChannels[peer.String()] = ch
+	statusesChannelMux.Unlock()
+
+	logger.Info("rumor sent further to " + peer.String())
+	peerMessagesToSend <- &AddressedGossipPacket{Address: peer, Packet: &GossipPacket{Rumor: rmsg}}
+
+	go g.startRumorMongeringThread(rmsg, ch, peer)
+}
+
+// --------------------------------------
+// rumor-mongering thread section:
+// --------------------------------------
+
+func (g *Gossiper) startRumorMongeringThread(messageBeingRumored *RumorMessage, ch chan *StatusPacket, peer *UDPAddr) {
+	ticker := time.NewTicker(RumorTimeout)
 	select {
-	case t := <- ticker.C:
-		fmt.Println("ahah", t)
-	case statusPacket := <- ch:
-		fmt.Println("hohoho", statusPacket)
+	case <-ticker.C:
+		logger.Info("peer " + peer.String() + " exceeded the timeout")
+		g.flipRumorMongeringCoin(messageBeingRumored)
+	case statusPacket := <-ch:
+		logger.Info("peer " + peer.String() + " sent status as response")
+
+		// clean the map
+		statusesChannelMux.Lock()
+		delete(statusesChannels, peer.String())
+		statusesChannelMux.Unlock()
+
+		rmsg, otherHasSomethingNew := g.messageStorage.Diff(statusPacket)
+		if rmsg != nil {
+			logger.Info("peer " + peer.String() + " doesn't know rmsg, sending it: " + rmsg.String())
+			g.spreadTheRumor(rmsg, peer)
+		} else if otherHasSomethingNew {
+			logger.Info("peer " + peer.String() + " knows more, than me, sending status to him")
+			agp := &AddressedGossipPacket{Packet: &GossipPacket{Status: g.messageStorage.GetCurrentStatusPacket()}, Address: peer}
+			peerMessagesToSend <- agp
+		} else {
+			logger.Info("peer " + peer.String() + " has same info as me, flipping the coin")
+			g.flipRumorMongeringCoin(messageBeingRumored)
+		}
+	}
+	// let the goroutine die!
+}
+
+func (g *Gossiper) flipRumorMongeringCoin(messageBeingRumored *RumorMessage) {
+	continueMongering := (rand.Int() % 2) == 0
+	if continueMongering {
+		g.spreadTheRumor(messageBeingRumored, nil)
+	} else {
+		logger.Info("finished mongering of " + messageBeingRumored.String())
 	}
 }
+
+// --------------------------------------
+// end of rumor-mongering thread section
+// --------------------------------------
 
 func main() {
 	g, err := initGossiper()
@@ -324,10 +393,11 @@ func main() {
 		return
 	}
 
-	g.startClientReader()
+	go g.startClientReader()
+	go g.startPeerReader()
+	go g.startPeerWriter()
 
-	//go g.startReadingPeers()
-	//g.startReadingClient() // goroutine dies, when app dies, so blocking function is called in main thread
+	g.startMessageProcessor() // goroutine dies, when app dies, so blocking function is called in main thread
 
 	fmt.Println("gossiper finished")
 }
