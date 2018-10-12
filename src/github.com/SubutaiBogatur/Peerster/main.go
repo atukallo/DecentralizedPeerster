@@ -18,14 +18,14 @@ import (
 // Some documentation on what's happening
 //
 // We will have threads:
-// * client-reader     thread : the only port reading from client socket. Sends client message to message-processor
-// * peer-reader       thread : the only port reading from peer socket. Sends GossipPackets to message-processor
-// * peer-writer       thread : the only port writing to peer socket. Listens to channel for GossipPackets and writes them
-// * peer-pinger       thread : tbi in antientropy
-// * message-processor thread : is an abstraction on client-listener, peer-listener threads. Receives all the messages and for every message:
-//     + rumor-msg  : upd status, send status back, send rumor further, start rumor-mongering thread waiting for status (what if already exists for this peer??)
-//     + status-msg : push it to one of the rumor-mongering threads (what if not present??)
-// * rumor-mongering   thread : thread waits either for status-msg to arrive or for timeout and stores rumor-msg, it was initiated for
+// * client-reader      thread : the only port reading from client socket. Sends client message to message-processor
+// * peer-reader        thread : the only port reading from peer socket. Sends GossipPackets to message-processor
+// * peer-writer        thread : the only port writing to peer socket. Listens to channel for GossipPackets and writes them
+// * anti-entropy-timer thread : goroutine sends a status to random peer every timeout seconds
+// * message-processor  thread : is an abstraction on client-listener, peer-listener threads. Receives all the messages and for every message:
+//     + rumor-msg  : upd status, send status back, send rumor further, start rumor-mongering thread waiting for status
+//     + status-msg : push it to one of the rumor-mongering threads (if rumor mongering is not in progress, then compare statuses and start it)
+// * rumor-mongering    thread : thread waits either for status-msg to arrive or for timeout and stores rumor-msg, it was initiated for
 //     + status-msg : cmp (store sync-safe Map for VectorClock, which are edited from message-processor) and send new msg via peer-communicator
 //     + timeout    : 1/2 & send new rumor-msg via peer-communicator
 
@@ -34,7 +34,7 @@ var (
 	UIPort     = flag.Int("UIPort", 4848, "Port, where gossiper listens for client. Client is situated on the same machine, so gossiper listens to "+LocalIp+":port for client")
 	gossipAddr = flag.String("gossipAddr", "127.0.0.1:1212", "Address, where gossiper is launched: ip:port. Other peers will contact gossiper through this peersAddress")
 	name       = flag.String("name", "go_rbachev", "Gossiper name")
-	peers      = flag.String("peers", "127.0.0.1:1213", "Other gossipers' addresses separated with \",\" in the form ip:port")
+	peers      = flag.String("peers", "", "Other gossipers' addresses separated with \",\" in the form ip:port")
 	simple     = flag.Bool("simple", true, "True, if mode is simple")
 
 	additional = flag.String("additional", "", "additional info")
@@ -51,7 +51,8 @@ var (
 )
 
 const (
-	RumorTimeout = time.Second
+	RumorTimeout       = time.Second
+	AntiEntropyTimeout = time.Second
 )
 
 func initGossiper() (Gossiper, error) {
@@ -197,6 +198,51 @@ func (g *Gossiper) startPeerWriter() {
 	}
 }
 
+func (g *Gossiper) startAntiEntropyTimer() {
+	logger.Info("starting anti-entropy timer thread")
+
+	for {
+		ticker := time.NewTicker(AntiEntropyTimeout)
+		 <- ticker.C // wait for the timer to shoot
+
+		 if g.emptyPeers() {
+		 	<- time.NewTicker(AntiEntropyTimeout * 5).C // wait additional time
+		 	continue
+		 }
+
+		 // send status to a random peer
+		 peer := g.getRandomPeer()
+		 peerMessagesToSend <- &AddressedGossipPacket{Address:peer, Packet:&GossipPacket{Status:g.messageStorage.GetCurrentStatusPacket()}}
+	}
+}
+
+func (g *Gossiper) getRandomPeer() *UDPAddr {
+	g.peersSliceMux.Lock()
+	defer g.peersSliceMux.Unlock()
+
+	randomInt := rand.Int31n(int32(len(g.peers))) // end not inclusive
+	randomPeer := g.peers[randomInt]
+
+	return randomPeer
+}
+
+func (g *Gossiper) emptyPeers() bool {
+	g.peersSliceMux.Lock()
+	defer g.peersSliceMux.Unlock()
+
+	return len(g.peers) == 0
+}
+
+func (g *Gossiper) getPeersCopy() []*UDPAddr {
+	g.peersSliceMux.Lock()
+	defer g.peersSliceMux.Unlock()
+
+	copySlice := make([]*UDPAddr, len(g.peers))
+	copy(copySlice, g.peers)
+
+	return copySlice
+}
+
 // --------------------------------------
 // message-processor thread section:
 // --------------------------------------
@@ -237,15 +283,31 @@ func (g *Gossiper) processAddressedGossipPacket(agp *AddressedGossipPacket) {
 		g.processAddressedStatusPacket(gp.Status, address)
 	} else if gp.Simple != nil {
 		logger.Info("got simple from " + address.String())
-		logger.Warn("someone is sending simple messages, ahahahah")
+		g.processAddressedSimpleMessage(gp.Simple, address)
+	}
+}
+
+func (g *Gossiper) processAddressedSimpleMessage(smsg *SimpleMessage, address *UDPAddr) {
+	g.peersSliceMux.Lock()
+	defer g.peersSliceMux.Unlock()
+
+	smsg.RelayPeerAddr = g.peersConnection.LocalAddr().String()
+
+	for _, peer := range g.peers {
+		if peer.String() == address.String() {
+			continue
+		}
+		logger.Info("sending simple to " + peer.String())
+		peerMessagesToSend <- &AddressedGossipPacket{Address:address, Packet:&GossipPacket{Simple:smsg}}
 	}
 }
 
 func (g *Gossiper) processAddressedStatusPacket(sp *StatusPacket, address *UDPAddr) {
 	statusesChannelMux.Lock()
 	if val, isPresent := statusesChannels[address.String()]; isPresent {
-		logger.Info("got status from map, okidoki")
-		val <- sp // here is a small non-critical race condition (the sp we write may not be read at all, if the eating goroutine has not cleaned the map yet)
+		logger.Info("status from " + address.String() + " found in map, forwarding it to corresponding goroutine...")
+		val <- sp
+		delete(statusesChannels, address.String()) // goroutine cannot eat more, than one status packet, so delete it from map
 		statusesChannelMux.Unlock()
 		return
 	}
@@ -258,6 +320,8 @@ func (g *Gossiper) processAddressedStatusPacket(sp *StatusPacket, address *UDPAd
 	} else if otherHasSomethingNew {
 		agp := &AddressedGossipPacket{Packet: &GossipPacket{Status: g.messageStorage.GetCurrentStatusPacket()}, Address: address}
 		peerMessagesToSend <- agp
+	} else {
+		log.Info("nothing interesting in the status")
 	}
 	// else do nothing at all
 }
@@ -290,7 +354,8 @@ func (g *Gossiper) processRumorMessage(rmsg *RumorMessage) {
 
 	if isNewMessage {
 		// rumormongering -- choose random peer to send rmsg to
-		if len(g.peers) == 0 { // access without sync, but nothing can go wrong
+		if g.emptyPeers() {
+			logger.Warn("no peers are known, cannot do rumor-mongering")
 			return // msg came from client and no peers are known
 		}
 
@@ -311,10 +376,7 @@ func (g *Gossiper) processRumorMessage(rmsg *RumorMessage) {
 func (g *Gossiper) spreadTheRumor(rmsg *RumorMessage, peer *UDPAddr) {
 
 	if peer == nil {
-		g.peersSliceMux.Lock()
-		randomInt := rand.Int31n(int32(len(g.peers))) // end not inclusive
-		peer = g.peers[randomInt]
-		g.peersSliceMux.Unlock()
+		peer = g.getRandomPeer()
 	}
 
 	statusesChannelMux.Lock()
@@ -350,12 +412,7 @@ func (g *Gossiper) startRumorMongeringThread(messageBeingRumored *RumorMessage, 
 
 		g.flipRumorMongeringCoin(messageBeingRumored)
 	case statusPacket := <-ch:
-		logger.Info("peer " + peer.String() + " sent status as response")
-
-		// clean the map
-		statusesChannelMux.Lock()
-		delete(statusesChannels, peer.String())
-		statusesChannelMux.Unlock()
+		logger.Info("processing status-response in rumor-mongering thread from " + peer.String())
 
 		rmsg, otherHasSomethingNew := g.messageStorage.Diff(statusPacket)
 		if rmsg != nil {
@@ -388,6 +445,11 @@ func (g *Gossiper) flipRumorMongeringCoin(messageBeingRumored *RumorMessage) {
 // --------------------------------------
 
 func main() {
+	customFormatter := new(log.TextFormatter)
+	//customFormatter.TimestampFormat = "15:04:05:05"
+	//customFormatter.FullTimestamp = true
+	log.SetFormatter(customFormatter)
+
 	g, err := initGossiper()
 	if err != nil {
 		logger.Fatal("gossiper failed to construct itself with error: " + err.Error())
@@ -400,6 +462,7 @@ func main() {
 	go g.startClientReader()
 	go g.startPeerReader()
 	go g.startPeerWriter()
+	go g.startAntiEntropyTimer()
 
 	g.startMessageProcessor() // goroutine dies, when app dies, so blocking function is called in main thread
 

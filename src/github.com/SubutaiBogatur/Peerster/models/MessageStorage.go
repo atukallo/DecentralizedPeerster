@@ -42,6 +42,8 @@ func (ms *MessageStorage) Diff(sp *StatusPacket) (*RumorMessage, bool) {
 
 	otherHasThisDoesnt := false
 
+	othersMap := make(map[string]uint32)
+
 	for _, peerStatus := range sp.Want {
 		nextId := peerStatus.NextID
 		name := peerStatus.Identifier
@@ -53,6 +55,18 @@ func (ms *MessageStorage) Diff(sp *StatusPacket) (*RumorMessage, bool) {
 			// other peer has something, we don't
 			otherHasThisDoesnt = true
 		}
+
+		othersMap[name] = nextId
+	}
+
+	for name, nextId := range ms.VectorClock {
+		if nextId > othersMap[name] {
+			// we have something, the other peer doesn't
+			return ms.Messages[name][othersMap[name]], otherHasThisDoesnt
+		} else if nextId < othersMap[name] {
+			// other peer has something, we don't
+			otherHasThisDoesnt = true // does not seem possible really
+		}
 	}
 
 	return nil, otherHasThisDoesnt
@@ -63,9 +77,12 @@ func (ms *MessageStorage) AddRumorMessage(rmsg *RumorMessage) bool {
 	defer ms.mux.Unlock()
 
 	name := rmsg.OriginalName
+	if name == "" {
+		log.Warn("got sender with empty name!")
+	}
 
 	if ms.Messages[name] == nil {
-		ms.Messages[name] = make([]*RumorMessage, 10)
+		ms.Messages[name] = make([]*RumorMessage, 0)
 	}
 
 	if rmsg.ID < ms.VectorClock[name] {
@@ -77,14 +94,18 @@ func (ms *MessageStorage) AddRumorMessage(rmsg *RumorMessage) bool {
 		log.Warn("messages from " + name + " arrive not in chronological order!")
 		log.Warn("got message with ID " + strconv.Itoa(int(rmsg.ID)) + " when value in vector clock is: " + strconv.Itoa(int(ms.VectorClock[name])))
 
-		// fill missing messages with zero text
-		for i := ms.VectorClock[name]; i < rmsg.ID; i++ {
-			ms.Messages[name] = append(ms.Messages[name], &RumorMessage{ID: i, OriginalName: name, Text: "error - chronological order broken - error"})
-			ms.VectorClock[name]++
-		}
+		if false {
+			// fill missing messages with zero text
+			for i := ms.VectorClock[name]; i < rmsg.ID; i++ {
+				ms.Messages[name] = append(ms.Messages[name], &RumorMessage{ID: i, OriginalName: name, Text: "error - chronological order broken - error"})
+				ms.VectorClock[name]++
+			}
 
-		ms.Messages[name] = append(ms.Messages[name], rmsg)
-		ms.VectorClock[name]++
+			ms.Messages[name] = append(ms.Messages[name], rmsg)
+			ms.VectorClock[name]++
+		} else {
+			return false // messages arrived not in chronological order, so we will not store them, but will wait for chronological order
+		}
 	}
 
 	// should add personal info to logger
