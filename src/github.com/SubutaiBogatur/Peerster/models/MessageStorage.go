@@ -26,7 +26,7 @@ func (ms *MessageStorage) GetCurrentStatusPacket() *StatusPacket {
 	ms.mux.Lock()
 	defer ms.mux.Unlock()
 
-	want := make([]PeerStatus, len(ms.VectorClock))
+	want := make([]PeerStatus, 0)
 	for name, nextId := range ms.VectorClock {
 		want = append(want, PeerStatus{Identifier: name, NextID: nextId})
 	}

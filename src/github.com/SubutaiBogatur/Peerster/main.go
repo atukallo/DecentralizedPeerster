@@ -35,9 +35,7 @@ var (
 	gossipAddr = flag.String("gossipAddr", "127.0.0.1:1212", "Address, where gossiper is launched: ip:port. Other peers will contact gossiper through this peersAddress")
 	name       = flag.String("name", "go_rbachev", "Gossiper name")
 	peers      = flag.String("peers", "", "Other gossipers' addresses separated with \",\" in the form ip:port")
-	simple     = flag.Bool("simple", true, "True, if mode is simple")
-
-	additional = flag.String("additional", "", "additional info")
+	simpleMode = flag.Bool("simple", false, "True, if mode is simple")
 
 	logger = log.WithField("bin", "gos")
 
@@ -203,16 +201,16 @@ func (g *Gossiper) startAntiEntropyTimer() {
 
 	for {
 		ticker := time.NewTicker(AntiEntropyTimeout)
-		 <- ticker.C // wait for the timer to shoot
+		<-ticker.C // wait for the timer to shoot
 
-		 if g.emptyPeers() {
-		 	<- time.NewTicker(AntiEntropyTimeout * 5).C // wait additional time
-		 	continue
-		 }
+		if g.emptyPeers() {
+			<-time.NewTicker(AntiEntropyTimeout * 5).C // wait additional time
+			continue
+		}
 
-		 // send status to a random peer
-		 peer := g.getRandomPeer()
-		 peerMessagesToSend <- &AddressedGossipPacket{Address:peer, Packet:&GossipPacket{Status:g.messageStorage.GetCurrentStatusPacket()}}
+		// send status to a random peer
+		peer := g.getRandomPeer()
+		peerMessagesToSend <- &AddressedGossipPacket{Address: peer, Packet: &GossipPacket{Status: g.messageStorage.GetCurrentStatusPacket()}}
 	}
 }
 
@@ -243,6 +241,21 @@ func (g *Gossiper) getPeersCopy() []*UDPAddr {
 	return copySlice
 }
 
+func (g *Gossiper) printPeers() {
+	g.peersSliceMux.Lock()
+	defer g.peersSliceMux.Unlock()
+
+	fmt.Print("PEERS ")
+	for i := 0; i < len(g.peers); i++ {
+		if i == len(g.peers)-1 {
+			fmt.Print(g.peers[i].String())
+		} else {
+			fmt.Print(g.peers[i].String() + ",")
+		}
+	}
+	fmt.Println("")
+}
+
 // --------------------------------------
 // message-processor thread section:
 // --------------------------------------
@@ -254,9 +267,13 @@ func (g *Gossiper) startMessageProcessor() {
 		select {
 		case cmsg := <-clientMessagesToProcess:
 			logger.Debug("got client message from channel: " + cmsg.Text)
+			cmsg.Print()
+			g.printPeers()
 			g.processClientMessage(cmsg)
 		case agp := <-peerMessagesToProcess:
 			logger.Debug("got peer message from channel")
+			agp.Print()
+			g.printPeers()
 			g.processAddressedGossipPacket(agp)
 		}
 	}
@@ -264,9 +281,15 @@ func (g *Gossiper) startMessageProcessor() {
 
 func (g *Gossiper) processClientMessage(cmsg *ClientMessage) {
 	logger.Info("got client message: " + cmsg.Text)
-	messageId := g.messageStorage.GetNextMessageId(g.name)
-	rmsg := &RumorMessage{OriginalName: g.name, ID: messageId, Text: cmsg.Text}
-	g.processRumorMessage(rmsg)
+	if !*simpleMode {
+		messageId := g.messageStorage.GetNextMessageId(g.name)
+		rmsg := &RumorMessage{OriginalName: g.name, ID: messageId, Text: cmsg.Text}
+		g.processRumorMessage(rmsg)
+	} else {
+		logger.Info("mode is simple, so client message is distributed as simple one")
+		smsg := &SimpleMessage{Text:cmsg.Text, OriginalName:g.name}
+		g.processAddressedSimpleMessage(smsg, nil)
+	}
 }
 
 func (g *Gossiper) processAddressedGossipPacket(agp *AddressedGossipPacket) {
@@ -294,11 +317,11 @@ func (g *Gossiper) processAddressedSimpleMessage(smsg *SimpleMessage, address *U
 	smsg.RelayPeerAddr = g.peersConnection.LocalAddr().String()
 
 	for _, peer := range g.peers {
-		if peer.String() == address.String() {
+		if address != nil && peer.String() == address.String() {
 			continue
 		}
 		logger.Info("sending simple to " + peer.String())
-		peerMessagesToSend <- &AddressedGossipPacket{Address:address, Packet:&GossipPacket{Simple:smsg}}
+		peerMessagesToSend <- &AddressedGossipPacket{Address: peer, Packet: &GossipPacket{Simple: smsg}}
 	}
 }
 
@@ -318,10 +341,10 @@ func (g *Gossiper) processAddressedStatusPacket(sp *StatusPacket, address *UDPAd
 	if rmsg != nil {
 		g.spreadTheRumor(rmsg, address)
 	} else if otherHasSomethingNew {
-		agp := &AddressedGossipPacket{Packet: &GossipPacket{Status: g.messageStorage.GetCurrentStatusPacket()}, Address: address}
-		peerMessagesToSend <- agp
+		peerMessagesToSend <- &AddressedGossipPacket{Packet: &GossipPacket{Status: g.messageStorage.GetCurrentStatusPacket()}, Address: address}
 	} else {
 		log.Info("nothing interesting in the status")
+		fmt.Println("IN SYNC WITH " + address.String())
 	}
 	// else do nothing at all
 }
@@ -391,6 +414,7 @@ func (g *Gossiper) spreadTheRumor(rmsg *RumorMessage, peer *UDPAddr) {
 
 	logger.Info("rumor sent further to " + peer.String())
 	peerMessagesToSend <- &AddressedGossipPacket{Address: peer, Packet: &GossipPacket{Rumor: rmsg}}
+	fmt.Println("MONGERING WITH " + peer.String())
 
 	go g.startRumorMongeringThread(rmsg, ch, peer)
 }
@@ -423,6 +447,7 @@ func (g *Gossiper) startRumorMongeringThread(messageBeingRumored *RumorMessage, 
 			agp := &AddressedGossipPacket{Packet: &GossipPacket{Status: g.messageStorage.GetCurrentStatusPacket()}, Address: peer}
 			peerMessagesToSend <- agp
 		} else {
+			fmt.Println("IN SYNC WITH " + peer.String())
 			logger.Info("peer " + peer.String() + " has same info as me, flipping the coin")
 			g.flipRumorMongeringCoin(messageBeingRumored)
 		}
@@ -433,8 +458,10 @@ func (g *Gossiper) startRumorMongeringThread(messageBeingRumored *RumorMessage, 
 func (g *Gossiper) flipRumorMongeringCoin(messageBeingRumored *RumorMessage) {
 	continueMongering := (rand.Int() % 2) == 0
 	if continueMongering {
+		peer := g.getRandomPeer() // crutch because of fmt. requirements in HW1 :(
 		logger.Info("coin says to continue rumor-mongering")
-		g.spreadTheRumor(messageBeingRumored, nil)
+		fmt.Println("FLIPPED COIN sending rumor to " + peer.String())
+		g.spreadTheRumor(messageBeingRumored, peer)
 	} else {
 		logger.Info("coin says to stop rumor-mongering of " + messageBeingRumored.String())
 	}
@@ -445,6 +472,8 @@ func (g *Gossiper) flipRumorMongeringCoin(messageBeingRumored *RumorMessage) {
 // --------------------------------------
 
 func main() {
+	log.SetLevel(log.FatalLevel)
+
 	customFormatter := new(log.TextFormatter)
 	//customFormatter.TimestampFormat = "15:04:05:05"
 	//customFormatter.FullTimestamp = true

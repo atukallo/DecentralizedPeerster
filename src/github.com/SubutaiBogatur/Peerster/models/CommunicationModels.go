@@ -48,12 +48,27 @@ func (rmsg *RumorMessage) String() string {
 	return rmsg.OriginalName + ":" + strconv.Itoa(int(rmsg.ID))
 }
 
-func (gp *GossipPacket) PrintClientPacket(knownPeers []*net.UDPAddr) {
-	gp.printPackage(knownPeers, true)
+func (cmsg *ClientMessage) Print() {
+	fmt.Println("CLIENT MESSAGE " + cmsg.Text)
 }
 
-func (gp *GossipPacket) PrintPeerPacket(knownPeers []*net.UDPAddr) {
-	gp.printPackage(knownPeers, false)
+func (agp *AddressedGossipPacket) Print() {
+	gp := agp.Packet
+
+	if gp.Rumor != nil {
+		rmsg := gp.Rumor
+		fmt.Println("RUMOR origin " + rmsg.OriginalName + " from " + agp.Address.String() + " ID " + strconv.Itoa(int(rmsg.ID)) + " contents " + rmsg.Text)
+	} else if gp.Status != nil {
+		status := gp.Status
+		fmt.Print("STATUS from " + agp.Address.String())
+		for _, peerStatus := range status.Want {
+			fmt.Print(" peer " + peerStatus.Identifier + " nextId " + strconv.Itoa(int(peerStatus.NextID)))
+		}
+		fmt.Println()
+	} else if gp.Simple != nil {
+		smsg := gp.Simple
+		fmt.Println("SIMPLE MESSAGE origin " + smsg.OriginalName + " from " + smsg.RelayPeerAddr + " contents " + smsg.Text)
+	}
 }
 
 func (gp *GossipPacket) printPackage(knownPeers []*net.UDPAddr, isFromClient bool) {
@@ -62,16 +77,5 @@ func (gp *GossipPacket) printPackage(knownPeers []*net.UDPAddr, isFromClient boo
 	if isFromClient {
 		fmt.Println("CLIENT MESSAGE " + smsg.Text)
 	} else {
-		fmt.Println("SIMPLE MESSAGE origin " + smsg.OriginalName + " from " + smsg.RelayPeerAddr + " contents " + smsg.Text)
 	}
-
-	fmt.Print("PEERS ")
-	for i := 0; i < len(knownPeers); i++ {
-		if i == len(knownPeers)-1 {
-			fmt.Print(knownPeers[i].String())
-		} else {
-			fmt.Print(knownPeers[i].String() + ",")
-		}
-	}
-	fmt.Println("")
 }
