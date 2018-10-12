@@ -5,6 +5,8 @@ import (
 	"strconv"
 )
 
+// todo: add hard sync here
+
 type MessageStorage struct {
 	// invariant: VectorClock[name] = len(Messages[name])
 	VectorClock map[string]uint32          // stores nextId value
@@ -15,7 +17,37 @@ func (ms *MessageStorage) GetNextMessageId(name string) uint32 {
 	return ms.VectorClock[name] // 0 if not found or value
 }
 
-func (ms *MessageStorage) ProcessRumorMessage(rmsg *RumorMessage) bool {
+func (ms *MessageStorage) GetCurrentStatusPacket() *StatusPacket {
+	want := make([]PeerStatus, len(ms.VectorClock))
+	for name, nextId := range ms.VectorClock {
+		want = append(want, PeerStatus{Identifier: name, NextID: nextId})
+	}
+	return &StatusPacket{Want: want}
+}
+
+// counts Diff of current VectorClock with VectorClock received from peer
+// returns (rmsg this peer has and another peer doesn't, does other peer has something new for this peer)
+// if return[0] != nil, return[1] is not guaranteed
+func (ms *MessageStorage) Diff(sp *StatusPacket) (*RumorMessage, bool) {
+	otherHasThisDoesnt := false
+
+	for _, peerStatus := range sp.Want {
+		nextId := peerStatus.NextID
+		name := peerStatus.Identifier
+
+		if ms.VectorClock[name] > nextId {
+			// we have something, the other peer doesn't
+			return ms.Messages[name][nextId], otherHasThisDoesnt
+		} else if ms.VectorClock[name] < nextId {
+			// other peer has something, we don't
+			otherHasThisDoesnt = true
+		}
+	}
+
+	return nil, otherHasThisDoesnt
+}
+
+func (ms *MessageStorage) AddRumorMessage(rmsg *RumorMessage) bool {
 	name := rmsg.OriginalName
 
 	if ms.Messages[name] == nil {
@@ -42,8 +74,7 @@ func (ms *MessageStorage) ProcessRumorMessage(rmsg *RumorMessage) bool {
 	}
 
 	// should add personal info to logger
-	log.Debug("Vector clock is:")
-	log.Debug(ms.VectorClock)
+	log.Debug("Vector clock is:", ms.VectorClock)
 
 	return true // was new
 }

@@ -5,6 +5,18 @@ import (
 	"net"
 )
 
+type AdressedGossipPacket struct {
+	Packet  *GossipPacket
+	Address *net.UDPAddr
+}
+
+// the invariant on the packet is that only one of the fields is not nil
+type GossipPacket struct {
+	Simple *SimpleMessage
+	Rumor  *RumorMessage
+	Status *StatusPacket
+}
+
 type SimpleMessage struct {
 	OriginalName  string // name of original gossiper sender
 	RelayPeerAddr string // address of latest peer retranslator in the form ip:port
@@ -17,21 +29,14 @@ type RumorMessage struct {
 	Text         string
 }
 
-// depicts gossiper's information about another peer
-type PeerStatus struct {
-	Identifier string
-	NextID     uint32
-}
-
 type StatusPacket struct {
 	Want []PeerStatus // vector clock
 }
 
-// the invariant on the packet is that only one of the fields is not nil
-type GossipPacket struct {
-	Simple *SimpleMessage
-	Rumor  *RumorMessage
-	Status *StatusPacket
+// depicts gossiper's information about another peer
+type PeerStatus struct {
+	Identifier string
+	NextID     uint32
 }
 
 type ClientMessage struct {
