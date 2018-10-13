@@ -16,9 +16,10 @@ var (
 	uiport     = flag.Int("UIPort", 4848, "Port, where gossiper listens for client. Client is situated on the same machine, so gossiper listens to "+LocalIp+":port for client")
 	gossipAddr = flag.String("gossipAddr", "127.0.0.1:1212", "Address, where gossiper is launched: ip:port. Other peers will contact gossiper through this peersAddress")
 	name       = flag.String("name", "go_rbachev", "Gossiper name")
-	peers      = flag.String("peers", "127.0.0.1:1212", "Other gossipers' addresses separated with \",\" in the form ip:port")
+	peers      = flag.String("peers", "", "Other gossipers' addresses separated with \",\" in the form ip:port")
 	simpleMode = flag.Bool("simple", false, "True, if mode is simple")
-	webserver  = flag.Bool("webserver", true, "False, if webserver is not needed")
+	noWebserver  = flag.Bool("noWebserver", false, "True, if webserver is not needed")
+	noAntiEntropy = flag.Bool("noAntiEntropy", false, "True, if no regular pinging is needed")
 )
 
 func main() {
@@ -43,9 +44,12 @@ func main() {
 	go g.StartClientReader()
 	go g.StartPeerReader()
 	go g.StartPeerWriter()
-	go g.StartAntiEntropyTimer()
 
-	if *webserver {
+	if !*noAntiEntropy {
+		go g.StartAntiEntropyTimer()
+	}
+
+	if !*noWebserver {
 		go StartWebserver(g)
 	}
 
