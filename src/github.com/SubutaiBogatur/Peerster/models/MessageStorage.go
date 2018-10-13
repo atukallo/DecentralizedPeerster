@@ -9,8 +9,9 @@ import (
 // struct is thread-safe, because it uses hard synchronization
 type MessageStorage struct {
 	// invariant: VectorClock[name] = len(Messages[name])
-	VectorClock map[string]uint32          // stores nextId value
-	Messages    map[string][]*RumorMessage // string -> (array of RumorMessages, where array index is ID)
+	VectorClock        map[string]uint32          // stores nextId value
+	Messages           map[string][]*RumorMessage // string -> (array of RumorMessages, where array index is ID)
+	MessagesChronOrder []*RumorMessage
 
 	mux sync.Mutex
 }
@@ -33,6 +34,18 @@ func (ms *MessageStorage) GetCurrentStatusPacket() *StatusPacket {
 		want = append(want, PeerStatus{Identifier: name, NextID: currentNextId})
 	}
 	return &StatusPacket{Want: want}
+}
+
+func (ms *MessageStorage) GetMessagesCopy() *[]RumorMessage {
+	ms.mux.Lock()
+	defer ms.mux.Unlock()
+
+	copySlice := make([]RumorMessage, len(ms.MessagesChronOrder))
+	for i, rmsg := range ms.MessagesChronOrder {
+		copySlice[i] = *rmsg
+	}
+
+	return &copySlice
 }
 
 // counts Diff of current VectorClock with VectorClock received from peer
@@ -93,6 +106,7 @@ func (ms *MessageStorage) AddRumorMessage(rmsg *RumorMessage) bool {
 		return false // not new
 	} else if rmsgId == ms.VectorClock[rmsg.OriginalName] {
 		ms.Messages[name] = append(ms.Messages[name], rmsg)
+		ms.MessagesChronOrder = append(ms.MessagesChronOrder, rmsg)
 		ms.VectorClock[name]++
 	} else {
 		log.Warn("messages from " + name + " arrive not in chronological order!")
@@ -101,7 +115,9 @@ func (ms *MessageStorage) AddRumorMessage(rmsg *RumorMessage) bool {
 		if false {
 			// fill missing messages with zero text
 			for i := ms.VectorClock[name]; i < rmsgId; i++ {
-				ms.Messages[name] = append(ms.Messages[name], &RumorMessage{ID: i, OriginalName: name, Text: "error - chronological order broken - error"})
+				brokenRmsg := &RumorMessage{ID: i, OriginalName: name, Text: "error - chronological order broken - error"}
+				ms.Messages[name] = append(ms.Messages[name], brokenRmsg)
+				ms.MessagesChronOrder = append(ms.MessagesChronOrder, brokenRmsg)
 				ms.VectorClock[name]++
 			}
 

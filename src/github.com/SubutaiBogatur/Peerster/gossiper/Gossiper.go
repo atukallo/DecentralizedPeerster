@@ -184,6 +184,22 @@ func (g *Gossiper) SetName(name string) {
 	g.name.Store(name)
 }
 
+func (g *Gossiper) GetID(name string) uint32 {
+	return g.messageStorage.GetNextMessageId(name)
+}
+
+func (g *Gossiper) GetPeerAddress() *UDPAddr {
+	return g.peersAddress
+}
+
+func (g *Gossiper) GetClientAddress() *UDPAddr {
+	return g.clientAddress
+}
+
+func (g *Gossiper) GetMessages() *[]RumorMessage {
+	return g.messageStorage.GetMessagesCopy()
+}
+
 // client-reader thread
 func (g *Gossiper) StartClientReader() {
 	g.l.Info("starting reading bytes on client: " + g.clientAddress.String())
@@ -207,7 +223,7 @@ func (g *Gossiper) StartClientReader() {
 
 // peer-reader thread
 func (g *Gossiper) StartPeerReader() {
-	g.l.Info("gossiper " + g.name.Load().(string) +  ": starting reading bytes on peer: " + g.peersAddress.String())
+	g.l.Info("gossiper " + g.name.Load().(string) + ": starting reading bytes on peer: " + g.peersAddress.String())
 	var buffer = make([]byte, MaxPacketSize)
 
 	for {

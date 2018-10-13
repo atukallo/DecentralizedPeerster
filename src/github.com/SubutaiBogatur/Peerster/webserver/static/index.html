@@ -7,12 +7,14 @@
             this gossiper
         </h3>
 
-        <div id="gossiper-name" style="margin-bottom: 10px">
-            tmpppppppppppppppp
+        <div id="gossiper-name">
         </div>
 
-        <input type="text" placeholder="New gossiper name..."/>
-        <button id="change-gossiper-name">
+        <div id="gossiper-id" style="margin-bottom: 10px">
+        </div>
+
+        <input type="text" id="gossiper-text-input" placeholder="New gossiper name..."/>
+        <button id="gossiper-name-button">
             Change name
         </button>
     </div>
@@ -22,11 +24,13 @@
             known peers
         </h3>
 
-        <ul id="known-peers-list">
-            <li>abc</li>
-            <li>def</li>
-            <li>egh</li>
+        <ul id="peers-list">
         </ul>
+
+        <input type="text" id="peer-input" placeholder="New peer ip:port ..."/>
+        <button id="add-peer-button">
+            Add peer
+        </button>
     </div>
 
     <div id="messages">
@@ -35,10 +39,12 @@
         </h3>
 
         <ul id="messages-list">
-            <li>ahahha</li>
-            <li>aooo</li>
-            <li>hahh</li>
         </ul>
+
+        <input type="text" id="message-input" placeholder="New message to gossip..."/>
+        <button id="send-message-button">
+            Send message
+        </button>
     </div>
 
 </div>
@@ -49,105 +55,133 @@
 
     // init fields:
 
-    // jQuery.get();
+    callGetGossiperName();
+    callGetID();
+    document.getElementById("gossiper-name-button").onclick = changeGossiperNameOnClick;
+    callGetPeers();
+    document.getElementById("add-peer-button").onclick = addNewPeerOnClick;
+    document.getElementById("send-message-button").onclick = sendMessageOnClick;
+    callGetMessages();
 
-    jQuery.get();
+    var timer = setInterval(updateAllFields, 1000 * 10); // update everything every 10 seconds
 
-    function gotNewName() {
-        var gossiperNameText = document.getElementById("gossiper-name");
-        gossiperNameText.innerHTML = "new name";
-        console.log("name changed")
+    function updateAllFields() {
+        callGetGossiperName();
+        callGetID();
+        callGetPeers();
+        callGetMessages();
+    }
 
-        $(gossiperNameText)
+    function sendMessageOnClick() {
+        callSendMessage();
+        callGetMessages();
+        callGetID();
+    }
+
+    function callGetMessages() {
+        function gotMessages(msgs, status, dunno) {
+            list = document.getElementById("messages-list")
+            while (list.hasChildNodes()) {
+                list.removeChild(list.firstChild)
+            }
+            var i;
+            for (i = 0; i < msgs.length; i++) {
+                // console.log(msgs);
+                list.appendChild(document.createTextNode(msgs[i].OriginalName + " - " + msgs[i].ID + " - " + msgs[i].Text));
+                list.appendChild(document.createElement("br"));
+            }
+        }
+        jQuery.ajax({
+            method: "GET",
+            url: "/getMessages",
+            success: gotMessages
+        })
+    }
+
+    function callSendMessage() {
+        var msg = document.getElementById("message-input").value;
+        jQuery.ajax({
+            method: "POST",
+            url: "/sendMessage",
+            data: msg
+        });
+        document.getElementById("message-input").value = "";
+    }
+
+    function addNewPeerOnClick() {
+        callAddPeer();
+        callGetPeers();
+    }
+
+    function callGetPeers() {
+        function gotPeers(peers, status, dunno) {
+            list = document.getElementById("peers-list")
+            while (list.hasChildNodes()) {
+                list.removeChild(list.firstChild)
+            }
+            var i;
+            for (i = 0; i < peers.length; i++) {
+                list.appendChild(document.createTextNode(peers[i].IP + ":" + peers[i].Port));
+                list.appendChild(document.createElement("br"));
+            }
+        }
+        jQuery.ajax({
+            method: "GET",
+            url: "/getPeers",
+            success: gotPeers
+        });
+    }
+
+    function callAddPeer() {
+        var newPeer = document.getElementById("peer-input").value;
+        jQuery.ajax({
+            method: "POST",
+            url: "/addPeer",
+            data: newPeer
+        });
+        document.getElementById("peer-input").value = "";
+    }
+
+    function changeGossiperNameOnClick() {
+        callSetGossiperName();
+        callGetGossiperName();
+        callGetID();
+    }
+
+    function callSetGossiperName() {
+        var newName = document.getElementById("gossiper-text-input").value;
+        jQuery.ajax({
+            method: "POST",
+            url: "/setGossiperName",
+            data: newName
+        });
+        document.getElementById("gossiper-text-input").value = "";
+    }
+
+    function callGetGossiperName() {
+        function gotNewName(name, status, dunno) {
+            document.getElementById("gossiper-name").innerHTML = "name: " + name;
+        }
+        jQuery.ajax({
+            method: "GET",
+            url: "/getGossiperName",
+            success: gotNewName
+        });
+    }
+
+    function callGetID() {
+        function gotID(id, status, dunno) {
+            document.getElementById("gossiper-id").innerHTML = "id: " + id;
+        }
+
+        jQuery.ajax({
+            method: "GET",
+            url: "/getGossiperID",
+            success: gotID
+        });
     }
 
 
-    // function newMessage() {
-    //     message = $(".message-input input").val();
-    //     if ($.trim(message) == '') {
-    //         return false;
-    //     }
-    //     $('<li class="sent"><p>' + message + '</p></li>').appendTo($('.messages ul'));
-    //     $('.message-input input').val(null);
-    //     $('.contact.active .preview').html('<span>You: </span>' + message);
-    //     $(".messages").animate({scrollTop: $(document).height()}, "fast");
-    //
-    //     $.post("/",
-    //             JSON.stringify({
-    //                 message: message
-    //             }),
-    //             function (data, status) {
-    //                 alert("Data: " + data + "\nStatus: " + status);
-    //             },
-    //             "json"
-    //     );
-    //
-    // };
-    //
-    // (function update() {
-    //
-    //     $.getJSON("/getMessages", function(data) {
-    //         for (let i = 0; i < data.Messages.length; ++i) {
-    //             $('<li class=replies><p align="right"><em>' + data.Messages[i].Origin + ' :</em><br>' + data.Messages[i].Content + '</p></li>')
-    //                     .appendTo($('.messages ul'));
-    //         }
-    //
-    //         for (let i = 0; i < data.Peers.length; ++i) {
-    //             addPeer(data.Peers[i]);
-    //         }
-    //     });
-    //
-    //     setTimeout(update, 5000);
-    // })();
-    //
-    // $('.submit').click(function () {
-    //     newMessage();
-    // });
-    //
-    // $(window).on('keydown', function (e) {
-    //     if (e.which == 13) {
-    //         newMessage();
-    //         return false;
-    //     }
-    // });
-    //
-    // function test(event) {
-    //     alert("TEST");
-    // };
-    //
-    // $('#addcontact').click(test);
-    //     /*function () {
-    //     /*peerAddr = $(".peerAddr").val();
-    //     peerPort = $(".peerPort").val();
-    //
-    //     if ($.trim(peerAddr) == '') {
-    //         alert("Please specify a peer address");
-    //         return;
-    //     } else if ($.trim(peerPort) == '') {
-    //         alert("Please specify a peer port");
-    //         return;
-    //     }
-    //
-    //     alert("TEST");
-    //     return false;
-    //
-    //     /*$.post("/newPeer",
-    //             JSON.stringify({
-    //                 peer: peerAddr+':'+peerPort
-    //             }),
-    //             function (data, status) {
-    //             },
-    //             "json"
-    //     );
-    //
-    //     addPeer(peerAddr+':'+peerPort);*/
-    // //});
-    //
-    // function addPeer(peer) {
-    //     $('<li class="contact"><div class="wrap"><div class="meta"><p class="name">' + peer + '</p></div></div></li>').appendTo($('#contacts ul'));
-    // };
-
-    //# sourceURL=pen.js
 </script>
 </body>
 </html>
