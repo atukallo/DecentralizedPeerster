@@ -9,6 +9,7 @@ import (
 	"math/rand"
 	. "net"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -45,39 +46,160 @@ const (
 )
 
 type Gossiper struct {
-	Name atomic.Value // Name can be changed by webserver and is accessed from message-processor, thus using atomic string
+	name atomic.Value // name can be changed by webserver and is accessed from message-processor, thus using atomic string
 
-	PeersAddress    *UDPAddr // PeersAddress for peers
-	PeersConnection *UDPConn
+	peersAddress    *UDPAddr // peersAddress for peers
+	peersConnection *UDPConn
 
-	ClientAddress    *UDPAddr
-	ClientConnection *UDPConn
+	clientAddress    *UDPAddr
+	clientConnection *UDPConn
 
-	Peers         []*UDPAddr // accessed from message-processor and from rumor-mongering
-	PeersSliceMux sync.Mutex
+	peers         []*UDPAddr // accessed from message-processor and from rumor-mongering
+	peersSliceMux sync.Mutex
 
-	MessageStorage *MessageStorage // accessed from message-processor and from rumor-mongering, is hard-synchronized
+	messageStorage *MessageStorage // accessed from message-processor and from rumor-mongering, is hard-synchronized
 
-	IsSimpleMode bool       // in simple mode sending only simple messages
-	L            *log.Entry // logger
+	isSimpleMode bool       // in simple mode sending only simple messages
+	l            *log.Entry // logger
+}
+
+func NewGossiper(name string, uiport int, peersAddress string, peers string, isSimpleMode bool) (*Gossiper, error) {
+	logger := log.WithField("bin", "gos")
+
+	g := &Gossiper{messageStorage: &MessageStorage{VectorClock: make(map[string]uint32), Messages: make(map[string][]*RumorMessage)}}
+	g.l = logger
+	g.isSimpleMode = isSimpleMode
+
+	clientListenAddress := LocalIp + ":" + strconv.Itoa(uiport)
+	clientListenUdpAddress, err := ResolveUDPAddr("udp4", clientListenAddress)
+	if err != nil {
+		g.l.Error("Unable to parse clientListenAddress: " + string(clientListenAddress))
+		return g, err
+	}
+	g.clientAddress = clientListenUdpAddress
+
+	peersListenUdpAddress, err := ResolveUDPAddr("udp4", peersAddress)
+	if err != nil {
+		g.l.Error("Unable to parse peersListenAddress: " + string(peersAddress))
+		return g, err
+	}
+	g.peersAddress = peersListenUdpAddress
+	g.l = g.l.WithField("a", peersListenUdpAddress.String())
+
+	if name == "" {
+		return g, PeersterError{ErrorMsg: "Empty name provided"}
+	}
+	g.name.Store(name)
+
+	peersArr := strings.Split(peers, ",")
+	for i := 0; i < len(peersArr); i++ {
+		if peersArr[i] == "" {
+			continue
+		}
+
+		peerAddr, err := ResolveUDPAddr("udp4", peersArr[i])
+		if err != nil {
+			g.l.Error("Error when parsing peers")
+			return g, err
+		}
+		g.peers = append(g.peers, peerAddr)
+	}
+
+	// command line arguments parsed, start listening:
+	peersUdpConn, err := ListenUDP("udp4", g.peersAddress)
+	if err != nil {
+		return g, err
+	}
+	g.peersConnection = peersUdpConn
+
+	clientUdpConn, err := ListenUDP("udp4", g.clientAddress)
+	if err != nil {
+		return g, err
+	}
+	g.clientConnection = clientUdpConn
+
+	return g, nil
+}
+
+//helper functions:
+func (g *Gossiper) getRandomPeer() *UDPAddr {
+	g.peersSliceMux.Lock()
+	defer g.peersSliceMux.Unlock()
+
+	randomInt := rand.Int31n(int32(len(g.peers))) // end not inclusive
+	randomPeer := g.peers[randomInt]
+
+	return randomPeer
+}
+
+func (g *Gossiper) arePeersEmpty() bool {
+	g.peersSliceMux.Lock()
+	defer g.peersSliceMux.Unlock()
+
+	return len(g.peers) == 0
+}
+
+func (g *Gossiper) GetPeersCopy() []*UDPAddr {
+	g.peersSliceMux.Lock()
+	defer g.peersSliceMux.Unlock()
+
+	copySlice := make([]*UDPAddr, len(g.peers))
+	copy(copySlice, g.peers)
+
+	return copySlice
+}
+
+func (g *Gossiper) UpdatePeersIfNeeded(peer *UDPAddr) {
+	g.peersSliceMux.Lock()
+	defer g.peersSliceMux.Unlock()
+
+	for i := 0; i < len(g.peers); i++ {
+		if g.peers[i].String() == peer.String() {
+			return // peer is a known one
+		}
+	}
+	g.peers = append(g.peers, peer)
+}
+
+func (g *Gossiper) printPeers() {
+	g.peersSliceMux.Lock()
+	defer g.peersSliceMux.Unlock()
+
+	fmt.Print("PEERS ")
+	for i := 0; i < len(g.peers); i++ {
+		if i == len(g.peers)-1 {
+			fmt.Print(g.peers[i].String())
+		} else {
+			fmt.Print(g.peers[i].String() + ",")
+		}
+	}
+	fmt.Println("")
+}
+
+func (g *Gossiper) GetName() string {
+	return g.name.Load().(string)
+}
+
+func (g *Gossiper) SetName(name string) {
+	g.name.Store(name)
 }
 
 // client-reader thread
 func (g *Gossiper) StartClientReader() {
-	g.L.Info("starting reading bytes on client: " + g.ClientAddress.String())
+	g.l.Info("starting reading bytes on client: " + g.clientAddress.String())
 	var buffer = make([]byte, MaxPacketSize)
 
 	for {
-		g.ClientConnection.ReadFromUDP(buffer)
+		g.clientConnection.ReadFromUDP(buffer)
 
 		cmsg := &ClientMessage{}
 		if err := protobuf.Decode(buffer, cmsg); err != nil {
 			// todo(atukallo): fix some protobuf warnings
-			//g.L.Warn("unable to decode message, error: " + err.Error())
+			//g.l.Warn("unable to decode message, error: " + err.Error())
 		}
 
 		// ~~~ put into channel ~~~
-		g.L.Debug("put client message into channel")
+		g.l.Debug("put client message into channel")
 		clientMessagesToProcess <- cmsg
 		// ~~~~~~~~~~~~~~~~~~~~~~~~
 	}
@@ -85,22 +207,22 @@ func (g *Gossiper) StartClientReader() {
 
 // peer-reader thread
 func (g *Gossiper) StartPeerReader() {
-	g.L.Info("gossiper " + g.Name.Load().(string) +  ": starting reading bytes on peer: " + g.PeersAddress.String())
+	g.l.Info("gossiper " + g.name.Load().(string) +  ": starting reading bytes on peer: " + g.peersAddress.String())
 	var buffer = make([]byte, MaxPacketSize)
 
 	for {
-		_, addr, _ := g.PeersConnection.ReadFromUDP(buffer)
+		_, addr, _ := g.peersConnection.ReadFromUDP(buffer)
 
 		gp := &GossipPacket{}
 		if err := protobuf.Decode(buffer, gp); err != nil {
 			// todo(atukallo): fix some protobuf warnings
-			//g.L.Warn("unable to decode message, error: " + err.Error())
+			//g.l.Warn("unable to decode message, error: " + err.Error())
 		}
 
 		apg := &AddressedGossipPacket{Address: addr, Packet: gp}
 
 		// ~~~ put into channel ~~~
-		g.L.Debug("put peer message into channel")
+		g.l.Debug("put peer message into channel")
 		peerMessagesToProcess <- apg
 		// ~~~~~~~~~~~~~~~~~~~~~~~~
 	}
@@ -108,7 +230,7 @@ func (g *Gossiper) StartPeerReader() {
 
 // peer-writer thread
 func (g *Gossiper) StartPeerWriter() {
-	g.L.Info("starting peer writer thread")
+	g.l.Info("starting peer writer thread")
 
 	for {
 		// ~~~ read from channel ~~~
@@ -120,90 +242,37 @@ func (g *Gossiper) StartPeerWriter() {
 
 		packetBytes, err := protobuf.Encode(gp)
 		if err != nil {
-			g.L.Error("unable to encode msg: " + err.Error())
+			g.l.Error("unable to encode msg: " + err.Error())
 			continue
 		}
 
-		g.L.Debug("sending message from " + g.PeersConnection.LocalAddr().String() + " to " + address.String())
+		g.l.Debug("sending message from " + g.peersConnection.LocalAddr().String() + " to " + address.String())
 
-		n, err := g.PeersConnection.WriteToUDP(packetBytes, address)
+		n, err := g.peersConnection.WriteToUDP(packetBytes, address)
 		if err != nil {
-			g.L.Error("error when writing to connection: " + err.Error() + " n is " + strconv.Itoa(n))
+			g.l.Error("error when writing to connection: " + err.Error() + " n is " + strconv.Itoa(n))
 			continue
 		}
 	}
 }
 
+// anti-entropy thread
 func (g *Gossiper) StartAntiEntropyTimer() {
-	g.L.Info("starting anti-entropy timer thread")
+	g.l.Info("starting anti-entropy timer thread")
 
 	for {
 		ticker := time.NewTicker(AntiEntropyTimeout)
 		<-ticker.C // wait for the timer to shoot
 
-		if g.emptyPeers() {
+		if g.arePeersEmpty() {
 			<-time.NewTicker(AntiEntropyTimeout * 5).C // wait additional time
 			continue
 		}
 
 		// send status to a random peer
 		peer := g.getRandomPeer()
-		peerMessagesToSend <- &AddressedGossipPacket{Address: peer, Packet: &GossipPacket{Status: g.MessageStorage.GetCurrentStatusPacket()}}
+		peerMessagesToSend <- &AddressedGossipPacket{Address: peer, Packet: &GossipPacket{Status: g.messageStorage.GetCurrentStatusPacket()}}
 	}
-}
-
-func (g *Gossiper) getRandomPeer() *UDPAddr {
-	g.PeersSliceMux.Lock()
-	defer g.PeersSliceMux.Unlock()
-
-	randomInt := rand.Int31n(int32(len(g.Peers))) // end not inclusive
-	randomPeer := g.Peers[randomInt]
-
-	return randomPeer
-}
-
-func (g *Gossiper) emptyPeers() bool {
-	g.PeersSliceMux.Lock()
-	defer g.PeersSliceMux.Unlock()
-
-	return len(g.Peers) == 0
-}
-
-func (g *Gossiper) GetPeersCopy() []*UDPAddr {
-	g.PeersSliceMux.Lock()
-	defer g.PeersSliceMux.Unlock()
-
-	copySlice := make([]*UDPAddr, len(g.Peers))
-	copy(copySlice, g.Peers)
-
-	return copySlice
-}
-
-func (g *Gossiper) UpdatePeersIfNeeded(peer *UDPAddr) {
-	g.PeersSliceMux.Lock()
-	defer g.PeersSliceMux.Unlock()
-
-	for i := 0; i < len(g.Peers); i++ {
-		if g.Peers[i].String() == peer.String() {
-			return // peer is a known one
-		}
-	}
-	g.Peers = append(g.Peers, peer)
-}
-
-func (g *Gossiper) printPeers() {
-	g.PeersSliceMux.Lock()
-	defer g.PeersSliceMux.Unlock()
-
-	fmt.Print("PEERS ")
-	for i := 0; i < len(g.Peers); i++ {
-		if i == len(g.Peers)-1 {
-			fmt.Print(g.Peers[i].String())
-		} else {
-			fmt.Print(g.Peers[i].String() + ",")
-		}
-	}
-	fmt.Println("")
 }
 
 // --------------------------------------
@@ -211,17 +280,17 @@ func (g *Gossiper) printPeers() {
 // --------------------------------------
 
 func (g *Gossiper) StartMessageProcessor() {
-	g.L.Info("starting message processor")
+	g.l.Info("starting message processor")
 
 	for {
 		select {
 		case cmsg := <-clientMessagesToProcess:
-			g.L.Debug("got client message from channel: " + cmsg.Text)
+			g.l.Debug("got client message from channel: " + cmsg.Text)
 			cmsg.Print()
 			g.printPeers()
 			g.processClientMessage(cmsg)
 		case agp := <-peerMessagesToProcess:
-			g.L.Debug("got peer message from channel")
+			g.l.Debug("got peer message from channel")
 			agp.Print()
 			g.printPeers()
 			g.processAddressedGossipPacket(agp)
@@ -230,14 +299,14 @@ func (g *Gossiper) StartMessageProcessor() {
 }
 
 func (g *Gossiper) processClientMessage(cmsg *ClientMessage) {
-	g.L.Info("got client message: " + cmsg.Text)
-	gossiperName := g.Name.Load().(string)
-	if !g.IsSimpleMode {
-		messageId := g.MessageStorage.GetNextMessageId(gossiperName)
+	g.l.Info("got client message: " + cmsg.Text)
+	gossiperName := g.name.Load().(string)
+	if !g.isSimpleMode {
+		messageId := g.messageStorage.GetNextMessageId(gossiperName)
 		rmsg := &RumorMessage{OriginalName: gossiperName, ID: messageId, Text: cmsg.Text}
 		g.processRumorMessage(rmsg)
 	} else {
-		g.L.Info("mode is simple, so client message is distributed as simple one")
+		g.l.Info("mode is simple, so client message is distributed as simple one")
 		smsg := &SimpleMessage{Text: cmsg.Text, OriginalName: gossiperName}
 		g.processAddressedSimpleMessage(smsg, nil)
 	}
@@ -250,28 +319,28 @@ func (g *Gossiper) processAddressedGossipPacket(agp *AddressedGossipPacket) {
 	g.UpdatePeersIfNeeded(address)
 
 	if gp.Rumor != nil {
-		g.L.Info("got rumor-msg " + gp.Rumor.String() + " from " + address.String())
+		g.l.Info("got rumor-msg " + gp.Rumor.String() + " from " + address.String())
 		g.processAddressedRumorMessage(gp.Rumor, address)
 	} else if gp.Status != nil {
-		g.L.Info("got status from " + address.String())
+		g.l.Info("got status from " + address.String())
 		g.processAddressedStatusPacket(gp.Status, address)
 	} else if gp.Simple != nil {
-		g.L.Info("got simple from " + address.String())
+		g.l.Info("got simple from " + address.String())
 		g.processAddressedSimpleMessage(gp.Simple, address)
 	}
 }
 
 func (g *Gossiper) processAddressedSimpleMessage(smsg *SimpleMessage, address *UDPAddr) {
-	g.PeersSliceMux.Lock()
-	defer g.PeersSliceMux.Unlock()
+	g.peersSliceMux.Lock()
+	defer g.peersSliceMux.Unlock()
 
-	smsg.RelayPeerAddr = g.PeersConnection.LocalAddr().String()
+	smsg.RelayPeerAddr = g.peersConnection.LocalAddr().String()
 
-	for _, peer := range g.Peers {
+	for _, peer := range g.peers {
 		if address != nil && peer.String() == address.String() {
 			continue
 		}
-		g.L.Info("sending simple to " + peer.String())
+		g.l.Info("sending simple to " + peer.String())
 		peerMessagesToSend <- &AddressedGossipPacket{Address: peer, Packet: &GossipPacket{Simple: smsg}}
 	}
 }
@@ -279,7 +348,7 @@ func (g *Gossiper) processAddressedSimpleMessage(smsg *SimpleMessage, address *U
 func (g *Gossiper) processAddressedStatusPacket(sp *StatusPacket, address *UDPAddr) {
 	statusesChannelMux.Lock()
 	if val, isPresent := statusesChannels[address.String()]; isPresent {
-		g.L.Info("status from " + address.String() + " found in map, forwarding it to corresponding goroutine...")
+		g.l.Info("status from " + address.String() + " found in map, forwarding it to corresponding goroutine...")
 		val <- sp
 		delete(statusesChannels, address.String()) // goroutine cannot eat more, than one status packet, so delete it from map
 		statusesChannelMux.Unlock()
@@ -287,12 +356,12 @@ func (g *Gossiper) processAddressedStatusPacket(sp *StatusPacket, address *UDPAd
 	}
 	statusesChannelMux.Unlock()
 
-	g.L.Info("got status not from map, interesting")
-	rmsg, otherHasSomethingNew := g.MessageStorage.Diff(sp)
+	g.l.Info("got status not from map, interesting")
+	rmsg, otherHasSomethingNew := g.messageStorage.Diff(sp)
 	if rmsg != nil {
 		g.spreadTheRumor(rmsg, address)
 	} else if otherHasSomethingNew {
-		peerMessagesToSend <- &AddressedGossipPacket{Packet: &GossipPacket{Status: g.MessageStorage.GetCurrentStatusPacket()}, Address: address}
+		peerMessagesToSend <- &AddressedGossipPacket{Packet: &GossipPacket{Status: g.messageStorage.GetCurrentStatusPacket()}, Address: address}
 	} else {
 		log.Info("nothing interesting in the status")
 		fmt.Println("IN SYNC WITH " + address.String())
@@ -303,28 +372,28 @@ func (g *Gossiper) processAddressedStatusPacket(sp *StatusPacket, address *UDPAd
 func (g *Gossiper) processAddressedRumorMessage(rmsg *RumorMessage, address *UDPAddr) {
 
 	// send status back to rumorer:
-	feedbackStatus := &GossipPacket{Status: g.MessageStorage.GetCurrentStatusPacket()}
+	feedbackStatus := &GossipPacket{Status: g.messageStorage.GetCurrentStatusPacket()}
 	addressedFeedbackStatus := &AddressedGossipPacket{Address: address, Packet: feedbackStatus}
-	g.L.Info("sending status as feedback to " + address.String())
+	g.l.Info("sending status as feedback to " + address.String())
 	peerMessagesToSend <- addressedFeedbackStatus
 
 	g.processRumorMessage(rmsg)
 }
 
 func (g *Gossiper) processRumorMessage(rmsg *RumorMessage) {
-	isNewMessage := g.MessageStorage.AddRumorMessage(rmsg)
+	isNewMessage := g.messageStorage.AddRumorMessage(rmsg)
 
 	if isNewMessage {
 		// rumormongering -- choose random peer to send rmsg to
-		if g.emptyPeers() {
-			g.L.Warn("no Peers are known, cannot do rumor-mongering")
-			return // msg came from client and no Peers are known
+		if g.arePeersEmpty() {
+			g.l.Warn("no peers are known, cannot do rumor-mongering")
+			return // msg came from client and no peers are known
 		}
 
 		g.spreadTheRumor(rmsg, nil)
 	} else {
 		// if we got an old rumor, then let's do nothing, we already have sent a feedback, everything is good
-		g.L.Info("message is not new, skipping it")
+		g.l.Info("message is not new, skipping it")
 	}
 
 }
@@ -343,7 +412,7 @@ func (g *Gossiper) spreadTheRumor(rmsg *RumorMessage, peer *UDPAddr) {
 
 	statusesChannelMux.Lock()
 	if _, contains := statusesChannels[peer.String()]; contains {
-		g.L.Warn("rumormongering with this peer is already in progress, this case is too hard for me")
+		g.l.Warn("rumormongering with this peer is already in progress, this case is too hard for me")
 		statusesChannelMux.Unlock()
 		return
 	}
@@ -351,7 +420,7 @@ func (g *Gossiper) spreadTheRumor(rmsg *RumorMessage, peer *UDPAddr) {
 	statusesChannels[peer.String()] = ch
 	statusesChannelMux.Unlock()
 
-	g.L.Info("rumor sent further to " + peer.String())
+	g.l.Info("rumor sent further to " + peer.String())
 	peerMessagesToSend <- &AddressedGossipPacket{Address: peer, Packet: &GossipPacket{Rumor: rmsg}}
 	fmt.Println("MONGERING with " + peer.String())
 
@@ -366,7 +435,7 @@ func (g *Gossiper) startRumorMongeringThread(messageBeingRumored *RumorMessage, 
 	ticker := time.NewTicker(RumorTimeout)
 	select {
 	case <-ticker.C:
-		g.L.Info("peer " + peer.String() + " exceeded the timeout")
+		g.l.Info("peer " + peer.String() + " exceeded the timeout")
 
 		// clean the map
 		statusesChannelMux.Lock()
@@ -375,19 +444,19 @@ func (g *Gossiper) startRumorMongeringThread(messageBeingRumored *RumorMessage, 
 
 		g.flipRumorMongeringCoin(messageBeingRumored)
 	case statusPacket := <-ch:
-		g.L.Info("processing status-response in rumor-mongering thread from " + peer.String())
+		g.l.Info("processing status-response in rumor-mongering thread from " + peer.String())
 
-		rmsg, otherHasSomethingNew := g.MessageStorage.Diff(statusPacket)
+		rmsg, otherHasSomethingNew := g.messageStorage.Diff(statusPacket)
 		if rmsg != nil {
-			g.L.Info("peer " + peer.String() + " doesn't know rmsg, sending it: " + rmsg.String())
+			g.l.Info("peer " + peer.String() + " doesn't know rmsg, sending it: " + rmsg.String())
 			g.spreadTheRumor(rmsg, peer)
 		} else if otherHasSomethingNew {
-			g.L.Info("peer " + peer.String() + " knows more, than me, sending status to him")
-			agp := &AddressedGossipPacket{Packet: &GossipPacket{Status: g.MessageStorage.GetCurrentStatusPacket()}, Address: peer}
+			g.l.Info("peer " + peer.String() + " knows more, than me, sending status to him")
+			agp := &AddressedGossipPacket{Packet: &GossipPacket{Status: g.messageStorage.GetCurrentStatusPacket()}, Address: peer}
 			peerMessagesToSend <- agp
 		} else {
 			fmt.Println("IN SYNC WITH " + peer.String())
-			g.L.Info("peer " + peer.String() + " has same info as me, flipping the coin")
+			g.l.Info("peer " + peer.String() + " has same info as me, flipping the coin")
 			g.flipRumorMongeringCoin(messageBeingRumored)
 		}
 	}
@@ -398,11 +467,11 @@ func (g *Gossiper) flipRumorMongeringCoin(messageBeingRumored *RumorMessage) {
 	continueMongering := (rand.Int() % 2) == 0
 	if continueMongering {
 		peer := g.getRandomPeer() // crutch because of fmt. requirements in HW1 :(
-		g.L.Info("coin says to continue rumor-mongering")
+		g.l.Info("coin says to continue rumor-mongering")
 		fmt.Println("FLIPPED COIN sending rumor to " + peer.String())
 		g.spreadTheRumor(messageBeingRumored, peer)
 	} else {
-		g.L.Info("coin says to stop rumor-mongering of " + messageBeingRumored.String())
+		g.l.Info("coin says to stop rumor-mongering of " + messageBeingRumored.String())
 	}
 }
 

@@ -51,11 +51,14 @@
 
     // jQuery.get();
 
+    jQuery.get();
 
     function gotNewName() {
-        gossiperNameText = document.getElementById("gossiper-name");
+        var gossiperNameText = document.getElementById("gossiper-name");
         gossiperNameText.innerHTML = "new name";
         console.log("name changed")
+
+        $(gossiperNameText)
     }
 
 

@@ -3,19 +3,18 @@ package webserver
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	. "github.com/SubutaiBogatur/Peerster/gossiper"
 	"github.com/gorilla/mux"
+	log "github.com/sirupsen/logrus"
 	"io/ioutil"
 	"net/http"
-	log "github.com/sirupsen/logrus"
 )
 
 // * webserver is a thread, that listens on a given port for http-requests from frontend (ie browser). Frontend
 //    regularly asks for new information about peers and sometimes makes new orders for a gossiper
 
 var (
-	g *Gossiper = nil
+	g *Gossiper = nil // careful, it's shared by many threads
 
 	logger = log.WithField("bin", "webserv")
 )
@@ -23,7 +22,7 @@ var (
 func getGossiperName(w http.ResponseWriter, r *http.Request) {
 	logger.Info("get gossiper name")
 
-	data, err := json.Marshal(g.Name.Load().(string))
+	data, err := json.Marshal(g.GetName())
 	if err != nil {
 		log.Warn("error when making json response")
 	}
@@ -45,13 +44,13 @@ func setGossiperName(w http.ResponseWriter, r *http.Request) {
 	var name = ""
 	err = json.Unmarshal(body, &name)
 
-	g.Name.Store(name)
+	g.SetName(name)
 }
 
 func StartWebserver(gossiper *Gossiper) {
-	g = gossiper
+	logger.Info("the server started")
 
-	fmt.Println("server started")
+	g = gossiper
 
 	r := mux.NewRouter()
 
