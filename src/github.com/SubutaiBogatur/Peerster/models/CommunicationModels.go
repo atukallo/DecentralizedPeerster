@@ -70,12 +70,3 @@ func (agp *AddressedGossipPacket) Print() {
 		fmt.Println("SIMPLE MESSAGE origin " + smsg.OriginalName + " from " + smsg.RelayPeerAddr + " contents " + smsg.Text)
 	}
 }
-
-func (gp *GossipPacket) printPackage(knownPeers []*net.UDPAddr, isFromClient bool) {
-	var smsg *SimpleMessage = gp.Simple
-
-	if isFromClient {
-		fmt.Println("CLIENT MESSAGE " + smsg.Text)
-	} else {
-	}
-}

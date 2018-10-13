@@ -10,6 +10,7 @@ import (
 	. "net"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -44,7 +45,7 @@ const (
 )
 
 type Gossiper struct {
-	Name string
+	Name atomic.Value // Name can be changed by webserver and is accessed from message-processor, thus using atomic string
 
 	PeersAddress    *UDPAddr // PeersAddress for peers
 	PeersConnection *UDPConn
@@ -84,7 +85,7 @@ func (g *Gossiper) StartClientReader() {
 
 // peer-reader thread
 func (g *Gossiper) StartPeerReader() {
-	g.L.Info("gossiper " + g.Name +  ": starting reading bytes on peer: " + g.PeersAddress.String())
+	g.L.Info("gossiper " + g.Name.Load().(string) +  ": starting reading bytes on peer: " + g.PeersAddress.String())
 	var buffer = make([]byte, MaxPacketSize)
 
 	for {
@@ -168,7 +169,7 @@ func (g *Gossiper) emptyPeers() bool {
 	return len(g.Peers) == 0
 }
 
-func (g *Gossiper) getPeersCopy() []*UDPAddr {
+func (g *Gossiper) GetPeersCopy() []*UDPAddr {
 	g.PeersSliceMux.Lock()
 	defer g.PeersSliceMux.Unlock()
 
@@ -176,6 +177,18 @@ func (g *Gossiper) getPeersCopy() []*UDPAddr {
 	copy(copySlice, g.Peers)
 
 	return copySlice
+}
+
+func (g *Gossiper) UpdatePeersIfNeeded(peer *UDPAddr) {
+	g.PeersSliceMux.Lock()
+	defer g.PeersSliceMux.Unlock()
+
+	for i := 0; i < len(g.Peers); i++ {
+		if g.Peers[i].String() == peer.String() {
+			return // peer is a known one
+		}
+	}
+	g.Peers = append(g.Peers, peer)
 }
 
 func (g *Gossiper) printPeers() {
@@ -218,13 +231,14 @@ func (g *Gossiper) StartMessageProcessor() {
 
 func (g *Gossiper) processClientMessage(cmsg *ClientMessage) {
 	g.L.Info("got client message: " + cmsg.Text)
+	gossiperName := g.Name.Load().(string)
 	if !g.IsSimpleMode {
-		messageId := g.MessageStorage.GetNextMessageId(g.Name)
-		rmsg := &RumorMessage{OriginalName: g.Name, ID: messageId, Text: cmsg.Text}
+		messageId := g.MessageStorage.GetNextMessageId(gossiperName)
+		rmsg := &RumorMessage{OriginalName: gossiperName, ID: messageId, Text: cmsg.Text}
 		g.processRumorMessage(rmsg)
 	} else {
 		g.L.Info("mode is simple, so client message is distributed as simple one")
-		smsg := &SimpleMessage{Text: cmsg.Text, OriginalName: g.Name}
+		smsg := &SimpleMessage{Text: cmsg.Text, OriginalName: gossiperName}
 		g.processAddressedSimpleMessage(smsg, nil)
 	}
 }
@@ -233,7 +247,7 @@ func (g *Gossiper) processAddressedGossipPacket(agp *AddressedGossipPacket) {
 	gp := agp.Packet
 	address := agp.Address
 
-	g.updatePeersIfNeeded(address)
+	g.UpdatePeersIfNeeded(address)
 
 	if gp.Rumor != nil {
 		g.L.Info("got rumor-msg " + gp.Rumor.String() + " from " + address.String())
@@ -295,18 +309,6 @@ func (g *Gossiper) processAddressedRumorMessage(rmsg *RumorMessage, address *UDP
 	peerMessagesToSend <- addressedFeedbackStatus
 
 	g.processRumorMessage(rmsg)
-}
-
-func (g *Gossiper) updatePeersIfNeeded(peer *UDPAddr) {
-	g.PeersSliceMux.Lock()
-	defer g.PeersSliceMux.Unlock()
-
-	for i := 0; i < len(g.Peers); i++ {
-		if g.Peers[i].String() == peer.String() {
-			return // peer is a known one
-		}
-	}
-	g.Peers = append(g.Peers, peer)
 }
 
 func (g *Gossiper) processRumorMessage(rmsg *RumorMessage) {

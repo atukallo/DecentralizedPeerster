@@ -5,3 +5,4 @@ pkg
 
 src/github.com/SubutaiBogatur/Peerster/Peerster
 src/github.com/SubutaiBogatur/Peerster/client/client
+src/github.com/SubutaiBogatur/Peerster/webserver/webserver

@@ -6,6 +6,7 @@ import (
 	. "github.com/SubutaiBogatur/Peerster/gossiper"
 	. "github.com/SubutaiBogatur/Peerster/models"
 	. "github.com/SubutaiBogatur/Peerster/utils"
+	. "github.com/SubutaiBogatur/Peerster/webserver"
 	log "github.com/sirupsen/logrus"
 	"math/rand"
 	. "net"
@@ -106,6 +107,7 @@ func main() {
 	go g.StartPeerReader()
 	go g.StartPeerWriter()
 	go g.StartAntiEntropyTimer()
+	go StartWebserver(&g)
 
 	g.StartMessageProcessor() // goroutine dies, when app dies, so blocking function is called in main thread
 

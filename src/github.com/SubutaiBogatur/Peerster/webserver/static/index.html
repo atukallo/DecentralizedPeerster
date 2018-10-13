@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<body>
+
+<div id="frame">
+    <div>
+        <h3>
+            this gossiper
+        </h3>
+
+        <div id="gossiper-name" style="margin-bottom: 10px">
+            tmpppppppppppppppp
+        </div>
+
+        <input type="text" placeholder="New gossiper name..."/>
+        <button id="change-gossiper-name">
+            Change name
+        </button>
+    </div>
+
+    <div id="peers">
+        <h3>
+            known peers
+        </h3>
+
+        <ul id="known-peers-list">
+            <li>abc</li>
+            <li>def</li>
+            <li>egh</li>
+        </ul>
+    </div>
+
+    <div id="messages">
+        <h3>
+            messages
+        </h3>
+
+        <ul id="messages-list">
+            <li>ahahha</li>
+            <li>aooo</li>
+            <li>hahh</li>
+        </ul>
+    </div>
+
+</div>
+
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.3.1/jquery.min.js"></script>
+
+<script>
+
+    // init fields:
+
+    // jQuery.get();
+
+
+    function gotNewName() {
+        gossiperNameText = document.getElementById("gossiper-name");
+        gossiperNameText.innerHTML = "new name";
+        console.log("name changed")
+    }
+
+
+    // function newMessage() {
+    //     message = $(".message-input input").val();
+    //     if ($.trim(message) == '') {
+    //         return false;
+    //     }
+    //     $('<li class="sent"><p>' + message + '</p></li>').appendTo($('.messages ul'));
+    //     $('.message-input input').val(null);
+    //     $('.contact.active .preview').html('<span>You: </span>' + message);
+    //     $(".messages").animate({scrollTop: $(document).height()}, "fast");
+    //
+    //     $.post("/",
+    //             JSON.stringify({
+    //                 message: message
+    //             }),
+    //             function (data, status) {
+    //                 alert("Data: " + data + "\nStatus: " + status);
+    //             },
+    //             "json"
+    //     );
+    //
+    // };
+    //
+    // (function update() {
+    //
+    //     $.getJSON("/getMessages", function(data) {
+    //         for (let i = 0; i < data.Messages.length; ++i) {
+    //             $('<li class=replies><p align="right"><em>' + data.Messages[i].Origin + ' :</em><br>' + data.Messages[i].Content + '</p></li>')
+    //                     .appendTo($('.messages ul'));
+    //         }
+    //
+    //         for (let i = 0; i < data.Peers.length; ++i) {
+    //             addPeer(data.Peers[i]);
+    //         }
+    //     });
+    //
+    //     setTimeout(update, 5000);
+    // })();
+    //
+    // $('.submit').click(function () {
+    //     newMessage();
+    // });
+    //
+    // $(window).on('keydown', function (e) {
+    //     if (e.which == 13) {
+    //         newMessage();
+    //         return false;
+    //     }
+    // });
+    //
+    // function test(event) {
+    //     alert("TEST");
+    // };
+    //
+    // $('#addcontact').click(test);
+    //     /*function () {
+    //     /*peerAddr = $(".peerAddr").val();
+    //     peerPort = $(".peerPort").val();
+    //
+    //     if ($.trim(peerAddr) == '') {
+    //         alert("Please specify a peer address");
+    //         return;
+    //     } else if ($.trim(peerPort) == '') {
+    //         alert("Please specify a peer port");
+    //         return;
+    //     }
+    //
+    //     alert("TEST");
+    //     return false;
+    //
+    //     /*$.post("/newPeer",
+    //             JSON.stringify({
+    //                 peer: peerAddr+':'+peerPort
+    //             }),
+    //             function (data, status) {
+    //             },
+    //             "json"
+    //     );
+    //
+    //     addPeer(peerAddr+':'+peerPort);*/
+    // //});
+    //
+    // function addPeer(peer) {
+    //     $('<li class="contact"><div class="wrap"><div class="meta"><p class="name">' + peer + '</p></div></div></li>').appendTo($('#contacts ul'));
+    // };
+
+    //# sourceURL=pen.js
+</script>
+</body>
+</html>
