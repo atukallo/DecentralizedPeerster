@@ -62,7 +62,7 @@ func (agp *AddressedGossipPacket) Print() {
 		status := gp.Status
 		fmt.Print("STATUS from " + agp.Address.String())
 		for _, peerStatus := range status.Want {
-			fmt.Print(" peer " + peerStatus.Identifier + " nextId " + strconv.Itoa(int(peerStatus.NextID)))
+			fmt.Print(" peer " + peerStatus.Identifier + " nextID " + strconv.Itoa(int(peerStatus.NextID)))
 		}
 		fmt.Println()
 	} else if gp.Simple != nil {

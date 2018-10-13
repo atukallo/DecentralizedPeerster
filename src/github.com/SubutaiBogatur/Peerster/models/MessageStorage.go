@@ -15,11 +15,12 @@ type MessageStorage struct {
 	mux sync.Mutex
 }
 
+// numeration from 1
 func (ms *MessageStorage) GetNextMessageId(name string) uint32 {
 	ms.mux.Lock()
 	defer ms.mux.Unlock()
 
-	return ms.VectorClock[name] // 0 if not found or value
+	return ms.VectorClock[name] + 1 // numeration from 1, value or 0 + 1
 }
 
 func (ms *MessageStorage) GetCurrentStatusPacket() *StatusPacket {
@@ -28,7 +29,8 @@ func (ms *MessageStorage) GetCurrentStatusPacket() *StatusPacket {
 
 	want := make([]PeerStatus, 0)
 	for name, nextId := range ms.VectorClock {
-		want = append(want, PeerStatus{Identifier: name, NextID: nextId})
+		currentNextId := nextId + 1 // numeration from 1
+		want = append(want, PeerStatus{Identifier: name, NextID: currentNextId})
 	}
 	return &StatusPacket{Want: want}
 }
@@ -46,6 +48,7 @@ func (ms *MessageStorage) Diff(sp *StatusPacket) (*RumorMessage, bool) {
 
 	for _, peerStatus := range sp.Want {
 		nextId := peerStatus.NextID
+		nextId = peerStatus.NextID - 1 // numeration from 1
 		name := peerStatus.Identifier
 
 		if ms.VectorClock[name] > nextId {
@@ -85,18 +88,19 @@ func (ms *MessageStorage) AddRumorMessage(rmsg *RumorMessage) bool {
 		ms.Messages[name] = make([]*RumorMessage, 0)
 	}
 
-	if rmsg.ID < ms.VectorClock[name] {
+	rmsgId := rmsg.ID - 1 // numeration from 1
+	if rmsgId < ms.VectorClock[name] {
 		return false // not new
-	} else if rmsg.ID == ms.VectorClock[rmsg.OriginalName] {
+	} else if rmsgId == ms.VectorClock[rmsg.OriginalName] {
 		ms.Messages[name] = append(ms.Messages[name], rmsg)
 		ms.VectorClock[name]++
 	} else {
 		log.Warn("messages from " + name + " arrive not in chronological order!")
-		log.Warn("got message with ID " + strconv.Itoa(int(rmsg.ID)) + " when value in vector clock is: " + strconv.Itoa(int(ms.VectorClock[name])))
+		log.Warn("got message with ID " + strconv.Itoa(int(rmsgId)) + " when value in vector clock is: " + strconv.Itoa(int(ms.VectorClock[name])))
 
 		if false {
 			// fill missing messages with zero text
-			for i := ms.VectorClock[name]; i < rmsg.ID; i++ {
+			for i := ms.VectorClock[name]; i < rmsgId; i++ {
 				ms.Messages[name] = append(ms.Messages[name], &RumorMessage{ID: i, OriginalName: name, Text: "error - chronological order broken - error"})
 				ms.VectorClock[name]++
 			}
