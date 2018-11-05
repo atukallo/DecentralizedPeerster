@@ -51,6 +51,8 @@ func sendMessageToGossiper(message string, gossiperPort *int) {
 func main() {
 	log.SetLevel(log.DebugLevel)
 
+	flag.Parse()
+
 	sendMessageToGossiper(*msg, UIPort)
 
 	logger.Info("work done, shutting down")

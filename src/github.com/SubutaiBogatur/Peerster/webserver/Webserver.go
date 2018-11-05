@@ -121,7 +121,7 @@ func writeJsonResponse(w http.ResponseWriter, data interface{}) {
 }
 
 func StartWebserver(gossiper *Gossiper) {
-	logger.Info("the server started")
+	logger.Info("started web-server thread")
 
 	g = gossiper
 

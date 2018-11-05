@@ -202,7 +202,7 @@ func (g *Gossiper) GetMessages() *[]RumorMessage {
 
 // client-reader thread
 func (g *Gossiper) StartClientReader() {
-	g.l.Info("starting reading bytes on client: " + g.clientAddress.String())
+	g.l.Info("starting reading bytes on client: " + g.clientAddress.String() + " thread")
 	var buffer = make([]byte, MaxPacketSize)
 
 	for {
@@ -223,7 +223,7 @@ func (g *Gossiper) StartClientReader() {
 
 // peer-reader thread
 func (g *Gossiper) StartPeerReader() {
-	g.l.Info("gossiper " + g.name.Load().(string) + ": starting reading bytes on peer: " + g.peersAddress.String())
+	g.l.Info("gossiper " + g.name.Load().(string) + ": starting reading bytes on peer: " + g.peersAddress.String() + " in new thread")
 	var buffer = make([]byte, MaxPacketSize)
 
 	for {
@@ -401,6 +401,7 @@ func (g *Gossiper) processRumorMessage(rmsg *RumorMessage) {
 
 	if isNewMessage {
 		// rumormongering -- choose random peer to send rmsg to
+		// can do optimization of not sending rumour to its sender, but it's not that necessary
 		if g.arePeersEmpty() {
 			g.l.Warn("no peers are known, cannot do rumor-mongering")
 			return // msg came from client and no peers are known
