@@ -23,7 +23,7 @@ var (
 )
 
 func main() {
-	log.SetLevel(log.FatalLevel)
+	log.SetLevel(log.DebugLevel)
 
 	customFormatter := new(log.TextFormatter)
 	//customFormatter.TimestampFormat = "15:04:05:05"

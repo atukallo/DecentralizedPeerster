@@ -63,7 +63,7 @@
     document.getElementById("send-message-button").onclick = sendMessageOnClick;
     callGetMessages();
 
-    var timer = setInterval(updateAllFields, 1000 * 10); // update everything every 10 seconds
+    var timer = setInterval(updateAllFields, 1000 * 1); // update everything once in timeout
 
     function updateAllFields() {
         callGetGossiperName();

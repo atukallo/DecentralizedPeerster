@@ -14,47 +14,12 @@ import (
 // command line arguments
 var (
 	UIPort     = flag.Int("UIPort", 4848, "Port, where gossiper is listening for a client. Gossiper is listening on 127.0.0.1:{port}")
-	clientPort = flag.Int("clientPort", 4747, "Port, where client is launched")
 	msg        = flag.String("msg", "tmptmp", "Message to send to gossiper")
 
 	logger = log.WithField("bin", "clt")
 )
 
-func initClient() (Client, error) {
-	flag.Parse()
-
-	c := Client{}
-
-	{
-		gossiperListenAddress := LocalIp + ":" + strconv.Itoa(*clientPort)
-		gossiperListenUdpAddress, err := ResolveUDPAddr("udp4", gossiperListenAddress)
-		if err != nil {
-			logger.Error("unable to parse clientListenAddress: " + string(gossiperListenAddress))
-			return c, err
-		}
-		c.gossiperListenAddress = gossiperListenUdpAddress
-		logger = logger.WithField("a", gossiperListenUdpAddress.String())
-	}
-
-	// start listening (the client really does not need listening, but listening must be initiated before writing to socket)
-	{
-		gossiperUdpConn, err := ListenUDP("udp4", c.gossiperListenAddress)
-		if err != nil {
-			return c, err
-		}
-		c.gossiperListenConnection = gossiperUdpConn
-		logger.Info("listening on " + c.gossiperListenAddress.String())
-	}
-
-	return c, nil
-}
-
-type Client struct {
-	gossiperListenAddress    *UDPAddr
-	gossiperListenConnection *UDPConn
-}
-
-func (c *Client) sendMessageToGossiper(message string, gossiperPort *int) {
+func sendMessageToGossiper(message string, gossiperPort *int) {
 	msg := &ClientMessage{Text:message}
 	packetBytes, err := protobuf.Encode(msg)
 	if err != nil {
@@ -71,7 +36,12 @@ func (c *Client) sendMessageToGossiper(message string, gossiperPort *int) {
 	logger.Info("sending message to " + gossiperAddr.String())
 	logger.Debug("msg is: " + string(message))
 
-	n, err := c.gossiperListenConnection.WriteToUDP(packetBytes, gossiperAddr)
+	connToGossiper, err := Dial("udp4", gossiperAddr.String())
+	if err != nil {
+		logger.Error("error dialing: " + err.Error())
+	}
+
+	n, err := connToGossiper.Write(packetBytes)
 	if err != nil {
 		logger.Error("error when writing to connection: " + err.Error() + " n is " + strconv.Itoa(n))
 	}
@@ -81,13 +51,7 @@ func (c *Client) sendMessageToGossiper(message string, gossiperPort *int) {
 func main() {
 	log.SetLevel(log.DebugLevel)
 
-	c, err := initClient()
-	if err != nil {
-		logger.Fatal("client failed to construct itself with error: " + err.Error())
-		return
-	}
-
-	c.sendMessageToGossiper(*msg, UIPort)
+	sendMessageToGossiper(*msg, UIPort)
 
 	logger.Info("work done, shutting down")
 	fmt.Println("client finished")
