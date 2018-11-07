@@ -17,6 +17,7 @@ var (
 	gossipAddr = flag.String("gossipAddr", "127.0.0.1:1212", "Address, where gossiper is launched: ip:port. Other peers will contact gossiper through this peersAddress")
 	name       = flag.String("name", "go_rbachev", "Gossiper name")
 	peers      = flag.String("peers", "", "Other gossipers' addresses separated with \",\" in the form ip:port")
+	rtimer     = flag.Int("rtimer", 0, "route rumors sending period in seconds, 0 to disable")
 	simpleMode = flag.Bool("simple", false, "True, if mode is simple")
 	noWebserver  = flag.Bool("noWebserver", false, "True, if webserver is not needed")
 	noAntiEntropy = flag.Bool("noAntiEntropy", false, "True, if no regular pinging is needed")
@@ -49,6 +50,7 @@ func main() {
 		go g.StartAntiEntropyTimer()
 	}
 
+	go StartRouteRumorsSpreading(g, *rtimer)
 	if !*noWebserver {
 		go StartWebserver(g)
 	}

@@ -1,8 +1,9 @@
 <!DOCTYPE html>
+        {{/*I don't like frontend, I don't really want to do it beautifully, what is beautiful is backend, better have a look at it*/}}
 <body>
 
 <div id="frame">
-    <div>
+    <div style="margin-bottom: 20px">
         <h3>
             this gossiper
         </h3>
@@ -10,7 +11,7 @@
         <div id="gossiper-name">
         </div>
 
-        <div id="gossiper-id" style="margin-bottom: 10px">
+        <div id="gossiper-id">
         </div>
 
         <input type="text" id="gossiper-text-input" placeholder="New gossiper name..."/>
@@ -19,32 +20,54 @@
         </button>
     </div>
 
-    <div id="peers">
-        <h3>
-            known peers
-        </h3>
+    <div>
+        <div style="float: left">
+            <div id="peers">
+                <h3>
+                    known peers
+                </h3>
 
-        <ul id="peers-list">
-        </ul>
+                <ul id="peers-list">
+                </ul>
 
-        <input type="text" id="peer-input" placeholder="New peer ip:port ..."/>
-        <button id="add-peer-button">
-            Add peer
-        </button>
-    </div>
+                <input type="text" id="peer-input" placeholder="New peer ip:port ..."/>
+                <button id="add-peer-button">
+                    Add peer
+                </button>
+            </div>
 
-    <div id="messages">
-        <h3>
-            messages
-        </h3>
+            <div id="messages">
+                <h3>
+                    messages
+                </h3>
 
-        <ul id="messages-list">
-        </ul>
+                <ul id="messages-list">
+                </ul>
 
-        <input type="text" id="message-input" placeholder="New message to gossip..."/>
-        <button id="send-message-button">
-            Send message
-        </button>
+                <input type="text" id="message-input" placeholder="New message to gossip..."/>
+                <button id="send-message-button">
+                    Send message
+                </button>
+            </div>
+        </div>
+
+        <div style="float: left; margin-left: 20px">
+            <div id="peers">
+                <h3>
+                    known origins
+                </h3>
+
+                <ul id="origins-list">
+                    <li>
+                        <input type="radio" name="origin" value="looser"> looser <br>
+                    </li>
+                    <li>
+                        <input type="radio" name="origin" value="asdf"> asdf <br>
+                    </li>
+                </ul>
+            </div>
+
+        </div>
     </div>
 
 </div>
@@ -54,15 +77,11 @@
 <script>
 
     // init fields:
-
-    callGetGossiperName();
-    callGetID();
     document.getElementById("gossiper-name-button").onclick = changeGossiperNameOnClick;
-    callGetPeers();
     document.getElementById("add-peer-button").onclick = addNewPeerOnClick;
     document.getElementById("send-message-button").onclick = sendMessageOnClick;
-    callGetMessages();
 
+    updateAllFields();
     var timer = setInterval(updateAllFields, 1000 * 1); // update everything once in timeout
 
     function updateAllFields() {
@@ -80,17 +99,18 @@
 
     function callGetMessages() {
         function gotMessages(msgs, status, dunno) {
-            list = document.getElementById("messages-list")
+            list = document.getElementById("messages-list");
             while (list.hasChildNodes()) {
                 list.removeChild(list.firstChild)
             }
             var i;
-            for (i = 0; i < msgs.length; i++) {
+            for (i = msgs.length - 1; i >= 0; i--) { // never messages higher
                 // console.log(msgs);
                 list.appendChild(document.createTextNode(msgs[i].OriginalName + " - " + msgs[i].ID + " - " + msgs[i].Text));
                 list.appendChild(document.createElement("br"));
             }
         }
+
         jQuery.ajax({
             method: "GET",
             url: "/getMessages",
@@ -125,6 +145,7 @@
                 list.appendChild(document.createElement("br"));
             }
         }
+
         jQuery.ajax({
             method: "GET",
             url: "/getPeers",
@@ -162,6 +183,7 @@
         function gotNewName(name, status, dunno) {
             document.getElementById("gossiper-name").innerHTML = "name: " + name;
         }
+
         jQuery.ajax({
             method: "GET",
             url: "/getGossiperName",

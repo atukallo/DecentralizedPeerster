@@ -9,9 +9,9 @@ import (
 // struct is thread-safe, because it uses hard synchronization
 type MessageStorage struct {
 	// invariant: VectorClock[name] = len(Messages[name])
-	VectorClock        map[string]uint32          // stores nextId value
-	Messages           map[string][]*RumorMessage // string -> (array of RumorMessages, where array index is ID)
-	MessagesChronOrder []*RumorMessage
+	VectorClock                map[string]uint32          // stores nextId value
+	Messages                   map[string][]*RumorMessage // string -> (array of RumorMessages, where array index is ID)
+	NonEmptyMessagesChronOrder []*RumorMessage            // all the non-rumor-routing msgs in chronological order to display in frontend
 
 	mux sync.Mutex
 }
@@ -21,7 +21,7 @@ func (ms *MessageStorage) GetNextMessageId(name string) uint32 {
 	ms.mux.Lock()
 	defer ms.mux.Unlock()
 
-	return ms.VectorClock[name] + 1 // numeration from 1, value or 0 + 1
+	return ms.VectorClock[name] + 1 // numeration from 1, (value or 0) + 1
 }
 
 func (ms *MessageStorage) GetCurrentStatusPacket() *StatusPacket {
@@ -40,8 +40,8 @@ func (ms *MessageStorage) GetMessagesCopy() *[]RumorMessage {
 	ms.mux.Lock()
 	defer ms.mux.Unlock()
 
-	copySlice := make([]RumorMessage, len(ms.MessagesChronOrder))
-	for i, rmsg := range ms.MessagesChronOrder {
+	copySlice := make([]RumorMessage, len(ms.NonEmptyMessagesChronOrder))
+	for i, rmsg := range ms.NonEmptyMessagesChronOrder {
 		copySlice[i] = *rmsg
 	}
 
@@ -88,41 +88,61 @@ func (ms *MessageStorage) Diff(sp *StatusPacket) (*RumorMessage, bool) {
 	return nil, otherHasThisDoesnt
 }
 
+func (ms *MessageStorage) IsNewMessage(rmsg *RumorMessage) bool {
+	ms.mux.Lock()
+	defer ms.mux.Unlock()
+
+	rmsgId := rmsg.ID - 1 // numeration from 1
+	origin := rmsg.OriginalName
+
+	if rmsgId < ms.VectorClock[origin] {
+		return false
+	} else if rmsgId == ms.VectorClock[origin] {
+		return true
+	} else {
+		return false // not good
+	}
+
+}
+
 func (ms *MessageStorage) AddRumorMessage(rmsg *RumorMessage) bool {
 	ms.mux.Lock()
 	defer ms.mux.Unlock()
 
-	name := rmsg.OriginalName
-	if name == "" {
-		log.Warn("got sender with empty name!")
+	origin := rmsg.OriginalName
+	if origin == "" {
+		log.Warn("got sender with empty origin!")
 	}
 
-	if ms.Messages[name] == nil {
-		ms.Messages[name] = make([]*RumorMessage, 0)
+	if ms.Messages[origin] == nil {
+		ms.Messages[origin] = make([]*RumorMessage, 0)
 	}
 
 	rmsgId := rmsg.ID - 1 // numeration from 1
-	if rmsgId < ms.VectorClock[name] {
+	if rmsgId < ms.VectorClock[origin] {
 		return false // not new
-	} else if rmsgId == ms.VectorClock[rmsg.OriginalName] {
-		ms.Messages[name] = append(ms.Messages[name], rmsg)
-		ms.MessagesChronOrder = append(ms.MessagesChronOrder, rmsg)
-		ms.VectorClock[name]++
+	} else if rmsgId == ms.VectorClock[origin] {
+		ms.Messages[origin] = append(ms.Messages[origin], rmsg)
+		if rmsg.Text != "" {
+			// if not rumor-routing
+			ms.NonEmptyMessagesChronOrder = append(ms.NonEmptyMessagesChronOrder, rmsg)
+		}
+		ms.VectorClock[origin]++
 	} else {
-		log.Warn("messages from " + name + " arrive not in chronological order!")
-		log.Warn("got message with ID " + strconv.Itoa(int(rmsgId)) + " when value in vector clock is: " + strconv.Itoa(int(ms.VectorClock[name])))
+		log.Warn("messages from " + origin + " arrive not in chronological order!")
+		log.Warn("got message with ID " + strconv.Itoa(int(rmsgId)) + " when value in vector clock is: " + strconv.Itoa(int(ms.VectorClock[origin])))
 
 		if false {
 			// fill missing messages with zero text
-			for i := ms.VectorClock[name]; i < rmsgId; i++ {
-				brokenRmsg := &RumorMessage{ID: i, OriginalName: name, Text: "error - chronological order broken - error"}
-				ms.Messages[name] = append(ms.Messages[name], brokenRmsg)
-				ms.MessagesChronOrder = append(ms.MessagesChronOrder, brokenRmsg)
-				ms.VectorClock[name]++
+			for i := ms.VectorClock[origin]; i < rmsgId; i++ {
+				brokenRmsg := &RumorMessage{ID: i, OriginalName: origin, Text: "error - chronological order broken - error"}
+				ms.Messages[origin] = append(ms.Messages[origin], brokenRmsg)
+				ms.NonEmptyMessagesChronOrder = append(ms.NonEmptyMessagesChronOrder, brokenRmsg)
+				ms.VectorClock[origin]++
 			}
 
-			ms.Messages[name] = append(ms.Messages[name], rmsg)
-			ms.VectorClock[name]++
+			ms.Messages[origin] = append(ms.Messages[origin], rmsg)
+			ms.VectorClock[origin]++
 		} else {
 			return false // messages arrived not in chronological order, so we will not store them, but will wait for chronological order
 		}

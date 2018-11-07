@@ -23,11 +23,12 @@ import (
 // * peer-writer        thread : the only port writing to peer socket. Listens to channel for GossipPackets and writes them
 // * anti-entropy-timer thread : goroutine sends a status to random peer every timeout seconds
 // * message-processor  thread : is an abstraction on client-listener, peer-listener threads. Receives all the messages and for every message:
-//     + rumor-msg  : upd status, send status back, send rumor further, start rumor-mongering thread waiting for status
+//     + rumor-msg  : upd status, send status back, send rumor randomly further, start rumor-mongering thread waiting for status
 //     + status-msg : push it to one of the rumor-mongering threads (if rumor mongering is not in progress, then compare statuses and start it)
 // * rumor-mongering    thread : thread waits either for status-msg to arrive or for timeout and stores rumor-msg, it was initiated for
 //     + status-msg : cmp (store sync-safe Map for VectorClock, which are edited from message-processor) and send new msg via peer-communicator
 //     + timeout    : 1/2 & send new rumor-msg via peer-communicator
+// * webserver          thread : listens to http-requests on a given port and reads / writes from gossiper object
 
 // command line arguments
 var (
@@ -48,16 +49,20 @@ const (
 type Gossiper struct {
 	name atomic.Value // name can be changed by webserver and is accessed from message-processor, thus using atomic string
 
-	peersAddress    *UDPAddr // peersAddress for peers
-	peersConnection *UDPConn
-
+	peersAddress     *UDPAddr // peersAddress for peers
+	peersConnection  *UDPConn
 	clientAddress    *UDPAddr
 	clientConnection *UDPConn
 
-	peers         []*UDPAddr // accessed from message-processor and from rumor-mongering
+	// peers can be understood as "neighbours". Provided from initalization + web + relay rumor addresses
+	peers         []*UDPAddr // accessed eg from message-processor and from rumor-mongering
 	peersSliceMux sync.Mutex
 
-	messageStorage *MessageStorage // accessed from message-processor and from rumor-mongering, is hard-synchronized
+	// keys are origins. Can be understood as gossipers, who initiated messages we received (not relay!)
+	// values are peers, from whom we received the latest message from the origin
+	nextHop map[string]*UDPAddr // accessed from message-processor
+
+	messageStorage *MessageStorage // accessed eg from message-processor and from rumor-mongering, is hard-synchronized
 
 	isSimpleMode bool       // in simple mode sending only simple messages
 	l            *log.Entry // logger
@@ -392,6 +397,11 @@ func (g *Gossiper) processAddressedRumorMessage(rmsg *RumorMessage, address *UDP
 	addressedFeedbackStatus := &AddressedGossipPacket{Address: address, Packet: feedbackStatus}
 	g.l.Info("sending status as feedback to " + address.String())
 	peerMessagesToSend <- addressedFeedbackStatus
+
+	if g.messageStorage.IsNewMessage(rmsg) {
+		// update next hop data
+		g.nextHop[rmsg.OriginalName] = address
+	}
 
 	g.processRumorMessage(rmsg)
 }

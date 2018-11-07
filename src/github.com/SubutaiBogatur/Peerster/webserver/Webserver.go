@@ -3,9 +3,7 @@ package webserver
 import (
 	"encoding/json"
 	. "github.com/SubutaiBogatur/Peerster/gossiper"
-	. "github.com/SubutaiBogatur/Peerster/models"
 	. "github.com/SubutaiBogatur/Peerster/utils"
-	"github.com/dedis/protobuf"
 	"github.com/gorilla/mux"
 	log "github.com/sirupsen/logrus"
 	"io/ioutil"
@@ -22,9 +20,8 @@ var (
 	g *Gossiper = nil // careful, it's shared by many threads
 
 	webserverPort         = 8080
-	webserverGossiperPort = 4321 // from this port webserver sends client messages to gossiper and gossiper eats them
 
-	logger = log.WithField("bin", "webserv")
+	logger = log.WithField("bin", "webs")
 )
 
 func getGossiperName(w http.ResponseWriter, r *http.Request) {
@@ -78,31 +75,9 @@ func sendMessage(w http.ResponseWriter, r *http.Request) {
 		log.Warn("error json, when calling setGossiperName")
 	}
 	msg := string(body)
-	logger.Info("sending message: " + msg)
 
 	// let's now feed message to gossiper via network (haha)
-	cmsg := &ClientMessage{Text: msg}
-	packetBytes, err := protobuf.Encode(cmsg)
-	if err != nil {
-		logger.Error("unable to send msg: " + err.Error())
-	}
-
-	sendToGossiperAddr, err := ResolveUDPAddr("udp4", LocalIp+":"+strconv.Itoa(webserverGossiperPort))
-	if err != nil {
-		logger.Error("unable to send msg: " + err.Error())
-		return
-	}
-
-	peersUdpConn, err := ListenUDP("udp4", sendToGossiperAddr)
-	defer peersUdpConn.Close()
-	if err != nil {
-		return
-	}
-
-	n, err := peersUdpConn.WriteToUDP(packetBytes, g.GetClientAddress())
-	if err != nil {
-		logger.Error("error when writing to connection: " + err.Error() + " n is " + strconv.Itoa(n))
-	}
+	SendMessageToLocalPort(msg, g.GetClientAddress().Port, logger)
 }
 
 func getMessages(w http.ResponseWriter, r *http.Request) {
@@ -121,9 +96,11 @@ func writeJsonResponse(w http.ResponseWriter, data interface{}) {
 }
 
 func StartWebserver(gossiper *Gossiper) {
+	g = gossiper
+	logger = logger.WithField("a", g.GetPeerAddress().String())
+
 	logger.Info("started web-server thread")
 
-	g = gossiper
 
 	r := mux.NewRouter()
 
