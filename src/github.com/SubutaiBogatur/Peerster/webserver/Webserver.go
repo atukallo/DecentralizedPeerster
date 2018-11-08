@@ -69,6 +69,12 @@ func getPeers(w http.ResponseWriter, r *http.Request) {
 	writeJsonResponse(w, peers)
 }
 
+func getOrigins(w http.ResponseWriter, r *http.Request) {
+	logger.Info("get origins")
+	origins := g.GetOriginsCopy()
+	writeJsonResponse(w, origins)
+}
+
 func sendRumorMessage(w http.ResponseWriter, r *http.Request) {
 	body, err := ioutil.ReadAll(r.Body)
 	if err != nil {
@@ -80,9 +86,24 @@ func sendRumorMessage(w http.ResponseWriter, r *http.Request) {
 	SendRumorMessageToLocalPort(msg, g.GetClientAddress().Port, logger)
 }
 
+func sendPrivateMessage(w http.ResponseWriter, r *http.Request) {
+	//body, err := ioutil.ReadAll(r.Body)
+	//if err != nil {
+	//	log.Warn("error json, when calling setGossiperName")
+	//}
+	//msg := string(body)
+	// todo: decode destination
+
+	// let's now feed message to gossiper via network (haha)
+	//SendRumorMessageToLocalPort(msg, g.GetClientAddress().Port, logger)
+}
+
 func getMessages(w http.ResponseWriter, r *http.Request) {
 	logger.Info("get messages")
-	msgs := *g.GetMessages()
+	rmsgs := g.GetRumorMessages()
+	pmsgs := g.GetPrivateMessages()
+
+	msgs := map[string]interface{}{"rumor-messages" : rmsgs, "private-messages" : pmsgs}
 	writeJsonResponse(w, msgs)
 }
 
@@ -109,7 +130,9 @@ func StartWebserver(gossiper *Gossiper) {
 	r.Methods("GET").Subrouter().HandleFunc("/getGossiperID", getGossiperID)
 	r.Methods("GET").Subrouter().HandleFunc("/getPeers", getPeers)
 	r.Methods("POST").Subrouter().HandleFunc("/addPeer", addPeer)
+	r.Methods("GET").Subrouter().HandleFunc("/getOrigins", getOrigins)
 	r.Methods("POST").Subrouter().HandleFunc("/sendRumorMessage", sendRumorMessage)
+	r.Methods("POST").Subrouter().HandleFunc("/sendPrivateMessage", sendPrivateMessage)
 	r.Methods("GET").Subrouter().HandleFunc("/getMessages", getMessages)
 
 	r.Handle("/", http.FileServer(http.Dir("./webserver/static"))) // relative path for main.go

@@ -37,13 +37,25 @@ func (ms *MessageStorage) GetCurrentStatusPacket() *StatusPacket {
 	return &StatusPacket{Want: want}
 }
 
-func (ms *MessageStorage) GetMessagesCopy() *[]RumorMessage {
+func (ms *MessageStorage) GetRumorMessagesCopy() *[]RumorMessage {
 	ms.mux.Lock()
 	defer ms.mux.Unlock()
 
 	copySlice := make([]RumorMessage, len(ms.NonEmptyMessagesChronOrder))
 	for i, rmsg := range ms.NonEmptyMessagesChronOrder {
 		copySlice[i] = *rmsg
+	}
+
+	return &copySlice
+}
+
+func (ms *MessageStorage) GetPrivateMessagesCopy() *[]PrivateMessage {
+	ms.mux.Lock()
+	defer ms.mux.Unlock()
+
+	copySlice := make([]PrivateMessage, len(ms.PrivateMessages))
+	for i, pmsg := range ms.PrivateMessages {
+		copySlice[i] = *pmsg
 	}
 
 	return &copySlice

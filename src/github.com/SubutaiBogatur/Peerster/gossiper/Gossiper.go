@@ -62,7 +62,8 @@ type Gossiper struct {
 
 	// keys are origins. Can be understood as gossipers, who initiated messages we received (not relay!)
 	// values are peers, from whom we received the latest message from the origin
-	nextHop map[string]*UDPAddr // accessed from message-processor
+	nextHop    map[string]*UDPAddr // accessed from message-processor and from webserver (for keys)
+	nextHopMux sync.Mutex
 
 	messageStorage *MessageStorage // accessed eg from message-processor and from rumor-mongering, is hard-synchronized
 
@@ -183,6 +184,18 @@ func (g *Gossiper) printPeers() {
 	fmt.Println("")
 }
 
+func (g *Gossiper) GetOriginsCopy() *[]string {
+	g.nextHopMux.Lock()
+	defer g.nextHopMux.Unlock()
+
+	origins := make([]string, 0, len(g.nextHop))
+	for k := range g.nextHop {
+		origins = append(origins, k)
+	}
+
+	return &origins
+}
+
 func (g *Gossiper) GetName() string {
 	return g.name.Load().(string)
 }
@@ -203,8 +216,12 @@ func (g *Gossiper) GetClientAddress() *UDPAddr {
 	return g.clientAddress
 }
 
-func (g *Gossiper) GetMessages() *[]RumorMessage {
-	return g.messageStorage.GetMessagesCopy()
+func (g *Gossiper) GetRumorMessages() *[]RumorMessage {
+	return g.messageStorage.GetRumorMessagesCopy()
+}
+
+func (g *Gossiper) GetPrivateMessages() *[]PrivateMessage {
+	return g.messageStorage.GetPrivateMessagesCopy()
 }
 
 // client-reader thread
@@ -346,7 +363,7 @@ func (g *Gossiper) processClientMessage(cmsg *ClientMessage) {
 		g.processRumorMessage(rmsg)
 	} else if cmsg.Private != nil {
 		g.l.Info("got client private message")
-		pmsg := &PrivateMessage{Origin:gossiperName, ID:0, Text:cmsg.Private.Text, Destination:cmsg.Private.Destination, HopLimit:PrivateMessageHopLimit}
+		pmsg := &PrivateMessage{Origin: gossiperName, ID: 0, Text: cmsg.Private.Text, Destination: cmsg.Private.Destination, HopLimit: PrivateMessageHopLimit}
 		g.processPrivateMessage(pmsg)
 	}
 }
@@ -421,7 +438,9 @@ func (g *Gossiper) processAddressedRumorMessage(rmsg *RumorMessage, address *UDP
 
 	if g.messageStorage.IsNewMessage(rmsg) {
 		// update next hop data
+		g.nextHopMux.Lock()
 		g.nextHop[rmsg.OriginalName] = address
+		g.nextHopMux.Unlock()
 	}
 
 	g.processRumorMessage(rmsg)
@@ -446,11 +465,16 @@ func (g *Gossiper) processRumorMessage(rmsg *RumorMessage) {
 }
 
 func (g *Gossiper) processAddressedPrivateMessage(pmsg *PrivateMessage, address *UDPAddr) {
+	g.nextHopMux.Lock()
 	g.nextHop[pmsg.Origin] = address
+	g.nextHopMux.Unlock()
 	g.processPrivateMessage(pmsg)
 }
 
 func (g *Gossiper) processPrivateMessage(pmsg *PrivateMessage) {
+	g.nextHopMux.Lock()
+	defer g.nextHopMux.Unlock()
+
 	gossiperName := g.name.Load().(string)
 
 	if pmsg.Destination == gossiperName {
@@ -462,7 +486,7 @@ func (g *Gossiper) processPrivateMessage(pmsg *PrivateMessage) {
 			log.Warn("hop limit for forwarding exceeded, drop the msg..")
 		} else {
 			pmsg.HopLimit = pmsg.HopLimit - 1
-			agp := &AddressedGossipPacket{Address:g.nextHop[pmsg.Destination], Packet:&GossipPacket{Private:pmsg}}
+			agp := &AddressedGossipPacket{Address: g.nextHop[pmsg.Destination], Packet: &GossipPacket{Private: pmsg}}
 			peerMessagesToSend <- agp
 		}
 	} else {

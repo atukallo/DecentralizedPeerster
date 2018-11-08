@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-        {{/*I don't like frontend, I don't really want to do it beautifully, what is beautiful is backend, better have a look at it*/}}
+DISCLAIMER: I don't like frontend and thus it's bad and ugly. Please have a look at concurrent backend: it's very good and beautiful (imho)
 <body>
 
 <div id="frame">
@@ -22,51 +22,38 @@
 
     <div>
         <div style="float: left">
-            <div id="peers">
-                <h3>
-                    known peers
-                </h3>
+            <h3>known peers</h3>
+            <ul id="peers-list"></ul>
 
-                <ul id="peers-list">
-                </ul>
+            <input type="text" id="peer-input" placeholder="New peer ip:port ..."/>
+            <button id="add-peer-button">Add peer</button>
 
-                <input type="text" id="peer-input" placeholder="New peer ip:port ..."/>
-                <button id="add-peer-button">
-                    Add peer
-                </button>
-            </div>
+            <h3>rumor messages</h3>
 
-            <div id="rumor-messages">
-                <h3>
-                    rumor messages
-                </h3>
+            <input type="text" id="rumor-message-input" placeholder="New message to gossip..."/>
+            <button id="send-rumor-message-button">Send rumor message</button>
 
-                <ul id="rumor-messages-list">
-                </ul>
-
-                <input type="text" id="rumor-message-input" placeholder="New message to gossip..."/>
-                <button id="send-rumor-message-button">
-                    Send message
-                </button>
-            </div>
+            <ul id="rumor-messages-list"></ul>
         </div>
 
         <div style="float: left; margin-left: 20px">
-            <div id="peers">
-                <h3>
-                    known origins
-                </h3>
+            <h3>known origins</h3>
 
-                <ul id="origins-list">
-                    <li>
-                        <input type="radio" name="origin" value="looser"> looser <br>
-                    </li>
-                    <li>
-                        <input type="radio" name="origin" value="asdf"> asdf <br>
-                    </li>
-                </ul>
-            </div>
+            <ul id="origins-list">
+                <li>
+                    <input type="radio" name="origin" value="looser"/> looser <br>
+                </li>
+                <li>
+                    <input type="radio" name="origin" value="asdf"> asdf <br>
+                </li>
+            </ul>
 
+            <h3>private messages</h3>
+
+            <input type="text" id="private-message-input" placeholder="New private message..."/>
+            <button id="send-private-message-button">Send private message</button>
+
+            <ul id="private-messages-list"></ul>
         </div>
     </div>
 
@@ -80,15 +67,34 @@
     document.getElementById("gossiper-name-button").onclick = changeGossiperNameOnClick;
     document.getElementById("add-peer-button").onclick = addNewPeerOnClick;
     document.getElementById("send-rumor-message-button").onclick = sendRumorMessageOnClick;
+    document.getElementById("send-private-message-button").onclick = sendPrivateMessageOnClick;
 
     updateAllFields();
     var timer = setInterval(updateAllFields, 1000 * 1); // update everything once in timeout
 
+    function jqueryAjaxGet(url, success) {
+        jQuery.ajax({
+            method: "GET",
+            url: url,
+            success: success
+        })
+    }
+
+    function jqueryAjaxPost(url, data) {
+        jQuery.ajax({
+            method: "POST",
+            url: url,
+            data: data
+        });
+    }
+
     function updateAllFields() {
+        // can be possibly made in one call, but laaz
         callGetGossiperName();
         callGetID();
         callGetPeers();
         callGetMessages();
+        callGetOrigins();
     }
 
     function sendRumorMessageOnClick() {
@@ -97,34 +103,45 @@
         callGetID();
     }
 
+    function sendPrivateMessageOnClick() {
+        callSendPrivateMessage();
+        callGetMessages();
+    }
+
+    // gets both rumor and private messages
     function callGetMessages() {
         function gotMessages(msgs, status, dunno) {
+            console.log(msgs);
+
+            rumor_msgs = msgs['rumor-messages'];
             list = document.getElementById("rumor-messages-list");
             while (list.hasChildNodes()) {
                 list.removeChild(list.firstChild)
             }
             var i;
-            for (i = msgs.length - 1; i >= 0; i--) { // never messages higher
-                // console.log(msgs);
-                list.appendChild(document.createTextNode(msgs[i].OriginalName + " - " + msgs[i].ID + " - " + msgs[i].Text));
+            for (i = rumor_msgs.length - 1; i >= 0; i--) { // never messages higher
+                list.appendChild(document.createTextNode(rumor_msgs[i].OriginalName + " - " + rumor_msgs[i].ID + " - " + rumor_msgs[i].Text));
+                list.appendChild(document.createElement("br"));
+            }
+
+            private_msgs = msgs['private-messages'];
+            list = document.getElementById("private-messages-list");
+            while (list.hasChildNodes()) {
+                list.removeChild(list.firstChild)
+            }
+            var i;
+            for (i = private_msgs.length - 1; i >= 0; i--) { // never messages higher
+                list.appendChild(document.createTextNode(private_msgs[i].Origin + " - " + private_msgs[i].Text));
                 list.appendChild(document.createElement("br"));
             }
         }
 
-        jQuery.ajax({
-            method: "GET",
-            url: "/getMessages",
-            success: gotMessages
-        })
+        jqueryAjaxGet("/getMessages", gotMessages);
     }
 
     function callSendRumorMessage() {
         var msg = document.getElementById("rumor-message-input").value;
-        jQuery.ajax({
-            method: "POST",
-            url: "/sendRumorMessage",
-            data: msg
-        });
+        jqueryAjaxPost("/sendRumorMessage", msg);
         document.getElementById("rumor-message-input").value = "";
     }
 
@@ -135,7 +152,7 @@
 
     function callGetPeers() {
         function gotPeers(peers, status, dunno) {
-            list = document.getElementById("peers-list")
+            list = document.getElementById("peers-list");
             while (list.hasChildNodes()) {
                 list.removeChild(list.firstChild)
             }
@@ -146,21 +163,32 @@
             }
         }
 
-        jQuery.ajax({
-            method: "GET",
-            url: "/getPeers",
-            success: gotPeers
-        });
+        jqueryAjaxGet("/getPeers", gotPeers);
     }
 
     function callAddPeer() {
         var newPeer = document.getElementById("peer-input").value;
-        jQuery.ajax({
-            method: "POST",
-            url: "/addPeer",
-            data: newPeer
-        });
+        jqueryAjaxPost("/addPeer", newPeer);
         document.getElementById("peer-input").value = "";
+    }
+
+    function callGetOrigins() {
+        function gotOrigins(origins, status, dunno) {
+            list = document.getElementById("origins-list");
+            while (list.hasChildNodes()) {
+                list.removeChild(list.firstChild)
+            }
+            var i;
+            var radioHtmlTemplate = '<input type="radio" name="origins" ';
+            for (i = 0; i < origins.length; i++) {
+                var radioHtml = radioHtmlTemplate + 'value="' + origins[i] +'"/>' + " " + origins[i];
+                var li = document.createElement('li');
+                li.innerHTML = radioHtml;
+                list.appendChild(li);
+            }
+        }
+
+        jqueryAjaxGet("/getOrigins", gotOrigins);
     }
 
     function changeGossiperNameOnClick() {
@@ -171,11 +199,7 @@
 
     function callSetGossiperName() {
         var newName = document.getElementById("gossiper-text-input").value;
-        jQuery.ajax({
-            method: "POST",
-            url: "/setGossiperName",
-            data: newName
-        });
+        jqueryAjaxPost("/setGossiperName", newName);
         document.getElementById("gossiper-text-input").value = "";
     }
 
@@ -184,11 +208,7 @@
             document.getElementById("gossiper-name").innerHTML = "name: " + name;
         }
 
-        jQuery.ajax({
-            method: "GET",
-            url: "/getGossiperName",
-            success: gotNewName
-        });
+        jqueryAjaxGet("/getGossiperName", gotNewName);
     }
 
     function callGetID() {
@@ -196,14 +216,9 @@
             document.getElementById("gossiper-id").innerHTML = "id: " + id;
         }
 
-        jQuery.ajax({
-            method: "GET",
-            url: "/getGossiperID",
-            success: gotID
-        });
+        jqueryAjaxGet("/getGossiperID", gotID);
     }
 
 
 </script>
 </body>
-</html>
