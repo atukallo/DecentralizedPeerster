@@ -8,6 +8,16 @@ import (
 	"strconv"
 )
 
+func CheckError(err error, logger *log.Entry) {
+	if err != nil {
+		if logger == nil {
+			log.Warn("got error: " + err.Error())
+		} else {
+			logger.Warn("got error: " + err.Error())
+		}
+	}
+}
+
 func logError(msg string, logger *log.Entry) {
 	if logger == nil {
 		log.Error(msg)

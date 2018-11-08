@@ -76,7 +76,7 @@ func (cmsg *ClientMessage) Print() bool {
 		fmt.Println("CLIENT MESSAGE " + rcmsg.Text)
 	} else if cmsg.Private != nil {
 		pcmsg := cmsg.Private
-		fmt.Println("CLIENT PRIVATE MESSAGE TO " + pcmsg.Destination + ": " + pcmsg.Text)
+		fmt.Println("CLIENT PRIVATE TO " + pcmsg.Destination + ": " + pcmsg.Text)
 	} else {
 		// client route rumor message
 		return false
@@ -84,10 +84,13 @@ func (cmsg *ClientMessage) Print() bool {
 	return true
 }
 
-func (agp *AddressedGossipPacket) Print() {
+func (agp *AddressedGossipPacket) Print() bool {
 	gp := agp.Packet
 
 	if gp.Rumor != nil {
+		if gp.Rumor.Text == "" {
+			return false
+		}
 		rmsg := gp.Rumor
 		fmt.Println("RUMOR origin " + rmsg.OriginalName + " from " + agp.Address.String() + " ID " + strconv.Itoa(int(rmsg.ID)) + " contents " + rmsg.Text)
 	} else if gp.Status != nil {
@@ -102,6 +105,9 @@ func (agp *AddressedGossipPacket) Print() {
 		fmt.Println("SIMPLE MESSAGE origin " + smsg.OriginalName + " from " + smsg.RelayPeerAddr + " contents " + smsg.Text)
 	} else if gp.Private != nil {
 		pmsg := gp.Private
-		fmt.Println("PRIVATE MESSAGE origin " + pmsg.Origin + " from " + agp.Address.String() + " destination " + pmsg.Destination + " hoplimit " + fmt.Sprint(pmsg.HopLimit) + " contents " + pmsg.Text)
+		fmt.Println("PRIVATE origin " + pmsg.Origin + " from " + agp.Address.String() + " destination " + pmsg.Destination + " contents " + pmsg.Text)
+	} else {
+		return false // never should happen
 	}
+	return true
 }

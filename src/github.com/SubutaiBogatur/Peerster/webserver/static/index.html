@@ -70,7 +70,7 @@ DISCLAIMER: I don't like frontend and thus it's bad and ugly. Please have a look
     document.getElementById("send-private-message-button").onclick = sendPrivateMessageOnClick;
 
     updateAllFields();
-    var timer = setInterval(updateAllFields, 1000 * 1); // update everything once in timeout
+    var timer = setInterval(updateAllFields, 1000 * 10); // update everything once in timeout
 
     function jqueryAjaxGet(url, success) {
         jQuery.ajax({
@@ -111,7 +111,7 @@ DISCLAIMER: I don't like frontend and thus it's bad and ugly. Please have a look
     // gets both rumor and private messages
     function callGetMessages() {
         function gotMessages(msgs, status, dunno) {
-            console.log(msgs);
+            // console.log(msgs);
 
             rumor_msgs = msgs['rumor-messages'];
             list = document.getElementById("rumor-messages-list");
@@ -137,6 +137,19 @@ DISCLAIMER: I don't like frontend and thus it's bad and ugly. Please have a look
         }
 
         jqueryAjaxGet("/getMessages", gotMessages);
+    }
+
+    function callSendPrivateMessage() {
+        if (document.querySelector('input[name="origins"]:checked') == null) {
+            console.log("nothing is chosen!");
+            return; // nothing is chosen
+        }
+
+        var chosen_value = document.querySelector('input[name="origins"]:checked').value;
+        var private_text = document.getElementById("private-message-input").value;
+        jqueryAjaxPost("/sendPrivateMessage", chosen_value + "|" + private_text);
+        document.getElementById("private-message-input").value = "";
+        document.querySelector('input[name="origins"]:checked').checked = false;
     }
 
     function callSendRumorMessage() {
@@ -188,6 +201,9 @@ DISCLAIMER: I don't like frontend and thus it's bad and ugly. Please have a look
             }
         }
 
+        if (document.querySelector('input[name="origins"]:checked') != null) {
+            return; // if something is chosen, let's not update not to discard
+        }
         jqueryAjaxGet("/getOrigins", gotOrigins);
     }
 

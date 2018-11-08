@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+# tests work only with HW1
+
 go build
 cd client
 go build

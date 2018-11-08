@@ -8,6 +8,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"math/rand"
 	. "net"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -74,7 +75,9 @@ type Gossiper struct {
 func NewGossiper(name string, uiport int, peersAddress string, peers string, isSimpleMode bool) (*Gossiper, error) {
 	logger := log.WithField("bin", "gos")
 
-	g := &Gossiper{messageStorage: &MessageStorage{VectorClock: make(map[string]uint32), RumorMessages: make(map[string][]*RumorMessage)}}
+	g := &Gossiper{}
+	g.messageStorage = &MessageStorage{VectorClock: make(map[string]uint32), RumorMessages: make(map[string][]*RumorMessage)}
+	g.nextHop = make(map[string]*UDPAddr)
 	g.l = logger
 	g.isSimpleMode = isSimpleMode
 
@@ -192,6 +195,8 @@ func (g *Gossiper) GetOriginsCopy() *[]string {
 	for k := range g.nextHop {
 		origins = append(origins, k)
 	}
+
+	sort.Strings(origins)
 
 	return &origins
 }
@@ -332,8 +337,9 @@ func (g *Gossiper) StartMessageProcessor() {
 			g.processClientMessage(cmsg)
 		case agp := <-peerMessagesToProcess:
 			g.l.Debug("got peer message from channel")
-			agp.Print()
-			g.printPeers()
+			if agp.Print() {
+				g.printPeers() // if printed something
+			}
 			g.processAddressedGossipPacket(agp)
 		}
 	}
@@ -384,7 +390,7 @@ func (g *Gossiper) processAddressedGossipPacket(agp *AddressedGossipPacket) {
 		g.l.Info("got simple from " + address.String())
 		g.processAddressedSimpleMessage(gp.Simple, address)
 	} else if gp.Private != nil {
-		g.l.Info("got private form " + address.String())
+		g.l.Info("got private from " + address.String())
 		g.processAddressedPrivateMessage(gp.Private, address)
 	}
 }
@@ -467,6 +473,7 @@ func (g *Gossiper) processRumorMessage(rmsg *RumorMessage) {
 func (g *Gossiper) processAddressedPrivateMessage(pmsg *PrivateMessage, address *UDPAddr) {
 	g.nextHopMux.Lock()
 	g.nextHop[pmsg.Origin] = address
+	g.l.Debug("next hop map is: ", g.nextHop)
 	g.nextHopMux.Unlock()
 	g.processPrivateMessage(pmsg)
 }

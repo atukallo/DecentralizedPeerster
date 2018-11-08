@@ -25,17 +25,16 @@ var (
 )
 
 func getGossiperName(w http.ResponseWriter, r *http.Request) {
-	logger.Info("get gossiper name")
+	logger.Debug("get gossiper name")
 	writeJsonResponse(w, g.GetName())
 }
 
 func setGossiperName(w http.ResponseWriter, r *http.Request) {
 	body, err := ioutil.ReadAll(r.Body)
-	if err != nil {
-		log.Warn("error json, when calling setGossiperName")
-	}
+	CheckError(err, logger)
+
 	name := string(body)
-	log.Info("setGossiperName with name: " + name)
+	logger.Debug("setGossiperName with name: " + name)
 	if strings.TrimSpace(name) == "" {
 		return // naive validation
 	}
@@ -44,42 +43,36 @@ func setGossiperName(w http.ResponseWriter, r *http.Request) {
 
 func addPeer(w http.ResponseWriter, r *http.Request) {
 	body, err := ioutil.ReadAll(r.Body)
-	if err != nil {
-		log.Warn("error json, when calling setGossiperName")
-	}
+	CheckError(err, logger)
+
 	name := string(body)
-	logger.Info("add peer: " + name)
+	logger.Debug("add peer: " + name)
 	udpAddress, err := ResolveUDPAddr("udp4", name)
-	if err != nil {
-		log.Warn("unable to decode addr")
-		return
-	}
+	CheckError(err, logger)
 
 	g.UpdatePeersIfNeeded(udpAddress)
 }
 
 func getGossiperID(w http.ResponseWriter, r *http.Request) {
-	logger.Info("get id")
+	logger.Debug("get id")
 	writeJsonResponse(w, g.GetID(g.GetName()))
 }
 
 func getPeers(w http.ResponseWriter, r *http.Request) {
-	logger.Info("get peers")
+	logger.Debug("get peers")
 	peers := g.GetPeersCopy()
 	writeJsonResponse(w, peers)
 }
 
 func getOrigins(w http.ResponseWriter, r *http.Request) {
-	logger.Info("get origins")
+	logger.Debug("get origins")
 	origins := g.GetOriginsCopy()
 	writeJsonResponse(w, origins)
 }
 
 func sendRumorMessage(w http.ResponseWriter, r *http.Request) {
 	body, err := ioutil.ReadAll(r.Body)
-	if err != nil {
-		log.Warn("error json, when calling setGossiperName")
-	}
+	CheckError(err, logger)
 	msg := string(body)
 
 	// let's now feed message to gossiper via network (haha)
@@ -87,19 +80,18 @@ func sendRumorMessage(w http.ResponseWriter, r *http.Request) {
 }
 
 func sendPrivateMessage(w http.ResponseWriter, r *http.Request) {
-	//body, err := ioutil.ReadAll(r.Body)
-	//if err != nil {
-	//	log.Warn("error json, when calling setGossiperName")
-	//}
-	//msg := string(body)
-	// todo: decode destination
+	body, err := ioutil.ReadAll(r.Body)
+	CheckError(err, logger)
 
-	// let's now feed message to gossiper via network (haha)
-	//SendRumorMessageToLocalPort(msg, g.GetClientAddress().Port, logger)
+	s := strings.Split(string(body), "|") // terrible, sorry
+	dest := s[0]
+	text := s[1]
+
+	SendPrivateMessageToLocalPort(text, dest, g.GetClientAddress().Port, logger)
 }
 
 func getMessages(w http.ResponseWriter, r *http.Request) {
-	logger.Info("get messages")
+	logger.Debug("get messages")
 	rmsgs := g.GetRumorMessages()
 	pmsgs := g.GetPrivateMessages()
 
@@ -120,7 +112,7 @@ func StartWebserver(gossiper *Gossiper) {
 	g = gossiper
 	logger = logger.WithField("a", g.GetPeerAddress().String())
 
-	logger.Info("started web-server thread")
+	logger.Debug("started web-server thread")
 
 
 	r := mux.NewRouter()
