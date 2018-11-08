@@ -69,7 +69,7 @@ func getPeers(w http.ResponseWriter, r *http.Request) {
 	writeJsonResponse(w, peers)
 }
 
-func sendMessage(w http.ResponseWriter, r *http.Request) {
+func sendRumorMessage(w http.ResponseWriter, r *http.Request) {
 	body, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		log.Warn("error json, when calling setGossiperName")
@@ -77,7 +77,7 @@ func sendMessage(w http.ResponseWriter, r *http.Request) {
 	msg := string(body)
 
 	// let's now feed message to gossiper via network (haha)
-	SendMessageToLocalPort(msg, g.GetClientAddress().Port, logger)
+	SendRumorMessageToLocalPort(msg, g.GetClientAddress().Port, logger)
 }
 
 func getMessages(w http.ResponseWriter, r *http.Request) {
@@ -109,7 +109,7 @@ func StartWebserver(gossiper *Gossiper) {
 	r.Methods("GET").Subrouter().HandleFunc("/getGossiperID", getGossiperID)
 	r.Methods("GET").Subrouter().HandleFunc("/getPeers", getPeers)
 	r.Methods("POST").Subrouter().HandleFunc("/addPeer", addPeer)
-	r.Methods("POST").Subrouter().HandleFunc("/sendMessage", sendMessage)
+	r.Methods("POST").Subrouter().HandleFunc("/sendRumorMessage", sendRumorMessage)
 	r.Methods("GET").Subrouter().HandleFunc("/getMessages", getMessages)
 
 	r.Handle("/", http.FileServer(http.Dir("./webserver/static"))) // relative path for main.go

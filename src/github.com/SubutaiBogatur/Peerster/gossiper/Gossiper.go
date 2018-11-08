@@ -44,6 +44,8 @@ var (
 const (
 	RumorTimeout       = time.Second
 	AntiEntropyTimeout = time.Second
+
+	PrivateMessageHopLimit = 5
 )
 
 type Gossiper struct {
@@ -71,7 +73,7 @@ type Gossiper struct {
 func NewGossiper(name string, uiport int, peersAddress string, peers string, isSimpleMode bool) (*Gossiper, error) {
 	logger := log.WithField("bin", "gos")
 
-	g := &Gossiper{messageStorage: &MessageStorage{VectorClock: make(map[string]uint32), Messages: make(map[string][]*RumorMessage)}}
+	g := &Gossiper{messageStorage: &MessageStorage{VectorClock: make(map[string]uint32), RumorMessages: make(map[string][]*RumorMessage)}}
 	g.l = logger
 	g.isSimpleMode = isSimpleMode
 
@@ -306,9 +308,10 @@ func (g *Gossiper) StartMessageProcessor() {
 	for {
 		select {
 		case cmsg := <-clientMessagesToProcess:
-			g.l.Debug("got client message from channel: " + cmsg.Text)
-			cmsg.Print()
-			g.printPeers()
+			g.l.Debug("got client message from channel")
+			if cmsg.Print() {
+				g.printPeers() // if printed something
+			}
 			g.processClientMessage(cmsg)
 		case agp := <-peerMessagesToProcess:
 			g.l.Debug("got peer message from channel")
@@ -320,16 +323,31 @@ func (g *Gossiper) StartMessageProcessor() {
 }
 
 func (g *Gossiper) processClientMessage(cmsg *ClientMessage) {
-	g.l.Info("got client message: " + cmsg.Text)
 	gossiperName := g.name.Load().(string)
-	if !g.isSimpleMode {
+	if cmsg.Rumor != nil {
+		g.l.Info("got client rumor message: " + cmsg.Rumor.Text)
+		if g.isSimpleMode {
+			g.l.Info("mode is simple, so client rumor message is distributed as simple one to everyone")
+			smsg := &SimpleMessage{Text: cmsg.Rumor.Text, OriginalName: gossiperName}
+			g.processAddressedSimpleMessage(smsg, nil)
+		} else {
+			messageId := g.messageStorage.GetNextMessageId(gossiperName)
+			rmsg := &RumorMessage{OriginalName: gossiperName, ID: messageId, Text: cmsg.Rumor.Text}
+			g.processRumorMessage(rmsg)
+		}
+	} else if cmsg.RouteRumor != nil {
+		g.l.Info("got client route rumor message")
+		if g.isSimpleMode {
+			g.l.Warn("simple mode should not do route rumoring!")
+			return
+		}
 		messageId := g.messageStorage.GetNextMessageId(gossiperName)
-		rmsg := &RumorMessage{OriginalName: gossiperName, ID: messageId, Text: cmsg.Text}
+		rmsg := &RumorMessage{OriginalName: gossiperName, ID: messageId, Text: ""} // distributing message with empty text
 		g.processRumorMessage(rmsg)
-	} else {
-		g.l.Info("mode is simple, so client message is distributed as simple one")
-		smsg := &SimpleMessage{Text: cmsg.Text, OriginalName: gossiperName}
-		g.processAddressedSimpleMessage(smsg, nil)
+	} else if cmsg.Private != nil {
+		g.l.Info("got client private message")
+		pmsg := &PrivateMessage{Origin:gossiperName, ID:0, Text:cmsg.Private.Text, Destination:cmsg.Private.Destination, HopLimit:PrivateMessageHopLimit}
+		g.processPrivateMessage(pmsg)
 	}
 }
 
@@ -348,6 +366,9 @@ func (g *Gossiper) processAddressedGossipPacket(agp *AddressedGossipPacket) {
 	} else if gp.Simple != nil {
 		g.l.Info("got simple from " + address.String())
 		g.processAddressedSimpleMessage(gp.Simple, address)
+	} else if gp.Private != nil {
+		g.l.Info("got private form " + address.String())
+		g.processAddressedPrivateMessage(gp.Private, address)
 	}
 }
 
@@ -422,7 +443,31 @@ func (g *Gossiper) processRumorMessage(rmsg *RumorMessage) {
 		// if we got an old rumor, then let's do nothing, we already have sent a feedback, everything is good
 		g.l.Info("message is not new, skipping it")
 	}
+}
 
+func (g *Gossiper) processAddressedPrivateMessage(pmsg *PrivateMessage, address *UDPAddr) {
+	g.nextHop[pmsg.Origin] = address
+	g.processPrivateMessage(pmsg)
+}
+
+func (g *Gossiper) processPrivateMessage(pmsg *PrivateMessage) {
+	gossiperName := g.name.Load().(string)
+
+	if pmsg.Destination == gossiperName {
+		log.Info("got new private message from " + pmsg.Origin)
+		g.messageStorage.AddPrivateMessage(pmsg, gossiperName)
+	} else if g.nextHop[pmsg.Destination] != nil {
+		log.Info("got private message and forwarding it further")
+		if pmsg.HopLimit <= 0 {
+			log.Warn("hop limit for forwarding exceeded, drop the msg..")
+		} else {
+			pmsg.HopLimit = pmsg.HopLimit - 1
+			agp := &AddressedGossipPacket{Address:g.nextHop[pmsg.Destination], Packet:&GossipPacket{Private:pmsg}}
+			peerMessagesToSend <- agp
+		}
+	} else {
+		log.Warn("don't know such destination, drop the message..")
+	}
 }
 
 // -------------------------------------------

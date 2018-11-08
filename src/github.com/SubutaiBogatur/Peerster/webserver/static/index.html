@@ -36,16 +36,16 @@
                 </button>
             </div>
 
-            <div id="messages">
+            <div id="rumor-messages">
                 <h3>
-                    messages
+                    rumor messages
                 </h3>
 
-                <ul id="messages-list">
+                <ul id="rumor-messages-list">
                 </ul>
 
-                <input type="text" id="message-input" placeholder="New message to gossip..."/>
-                <button id="send-message-button">
+                <input type="text" id="rumor-message-input" placeholder="New message to gossip..."/>
+                <button id="send-rumor-message-button">
                     Send message
                 </button>
             </div>
@@ -79,7 +79,7 @@
     // init fields:
     document.getElementById("gossiper-name-button").onclick = changeGossiperNameOnClick;
     document.getElementById("add-peer-button").onclick = addNewPeerOnClick;
-    document.getElementById("send-message-button").onclick = sendMessageOnClick;
+    document.getElementById("send-rumor-message-button").onclick = sendRumorMessageOnClick;
 
     updateAllFields();
     var timer = setInterval(updateAllFields, 1000 * 1); // update everything once in timeout
@@ -91,15 +91,15 @@
         callGetMessages();
     }
 
-    function sendMessageOnClick() {
-        callSendMessage();
+    function sendRumorMessageOnClick() {
+        callSendRumorMessage();
         callGetMessages();
         callGetID();
     }
 
     function callGetMessages() {
         function gotMessages(msgs, status, dunno) {
-            list = document.getElementById("messages-list");
+            list = document.getElementById("rumor-messages-list");
             while (list.hasChildNodes()) {
                 list.removeChild(list.firstChild)
             }
@@ -118,14 +118,14 @@
         })
     }
 
-    function callSendMessage() {
-        var msg = document.getElementById("message-input").value;
+    function callSendRumorMessage() {
+        var msg = document.getElementById("rumor-message-input").value;
         jQuery.ajax({
             method: "POST",
-            url: "/sendMessage",
+            url: "/sendRumorMessage",
             data: msg
         });
-        document.getElementById("message-input").value = "";
+        document.getElementById("rumor-message-input").value = "";
     }
 
     function addNewPeerOnClick() {

@@ -32,9 +32,26 @@ func logDebug(msg string, logger *log.Entry) {
 	}
 }
 
-func SendMessageToLocalPort(message string, port int, logger *log.Entry) {
-	msg := &ClientMessage{Text:message}
-	packetBytes, err := protobuf.Encode(msg)
+func SendRouteRumorMessageToLocalPort(port int, logger *log.Entry) {
+	rrcmsg := &ClientRouteRumorMessage{}
+	cmsg := &ClientMessage{RouteRumor: rrcmsg}
+	sendMessageToLocalPort(cmsg, port, logger)
+}
+
+func SendRumorMessageToLocalPort(message string, port int, logger *log.Entry) {
+	rcmsg := &ClientRumorMessage{Text:message}
+	cmsg := &ClientMessage{Rumor:rcmsg}
+	sendMessageToLocalPort(cmsg, port, logger)
+}
+
+func SendPrivateMessageToLocalPort(message string, destination string, port int, logger *log.Entry) {
+	pcmsg := &ClientPrivateMessage{Text:message, Destination:destination}
+	cmsg := &ClientMessage{Private:pcmsg}
+	sendMessageToLocalPort(cmsg, port, logger)
+}
+
+func sendMessageToLocalPort(cmsg *ClientMessage, port int, logger *log.Entry) {
+	packetBytes, err := protobuf.Encode(cmsg)
 	if err != nil {
 		logError("unable to send msg: " + err.Error(), logger)
 		return
@@ -47,7 +64,6 @@ func SendMessageToLocalPort(message string, port int, logger *log.Entry) {
 	}
 
 	logInfo("sending message to " + gossiperAddr.String(), logger)
-	logDebug("msg is: " + string(message), logger)
 
 	connToGossiper, err := Dial("udp4", gossiperAddr.String())
 	if err != nil {

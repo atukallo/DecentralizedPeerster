@@ -8,10 +8,11 @@ import (
 
 // struct is thread-safe, because it uses hard synchronization
 type MessageStorage struct {
-	// invariant: VectorClock[name] = len(Messages[name])
+	// invariant: VectorClock[name] = len(RumorMessages[name])
 	VectorClock                map[string]uint32          // stores nextId value
-	Messages                   map[string][]*RumorMessage // string -> (array of RumorMessages, where array index is ID)
+	RumorMessages              map[string][]*RumorMessage // string -> (array of RumorMessages, where array index is ID)
 	NonEmptyMessagesChronOrder []*RumorMessage            // all the non-rumor-routing msgs in chronological order to display in frontend
+	PrivateMessages            []*PrivateMessage          // invariant: destination = this gossiper
 
 	mux sync.Mutex
 }
@@ -66,7 +67,7 @@ func (ms *MessageStorage) Diff(sp *StatusPacket) (*RumorMessage, bool) {
 
 		if ms.VectorClock[name] > nextId {
 			// we have something, the other peer doesn't
-			return ms.Messages[name][nextId], otherHasThisDoesnt
+			return ms.RumorMessages[name][nextId], otherHasThisDoesnt
 		} else if ms.VectorClock[name] < nextId {
 			// other peer has something, we don't
 			otherHasThisDoesnt = true
@@ -78,7 +79,7 @@ func (ms *MessageStorage) Diff(sp *StatusPacket) (*RumorMessage, bool) {
 	for name, nextId := range ms.VectorClock {
 		if nextId > othersMap[name] {
 			// we have something, the other peer doesn't
-			return ms.Messages[name][othersMap[name]], otherHasThisDoesnt
+			return ms.RumorMessages[name][othersMap[name]], otherHasThisDoesnt
 		} else if nextId < othersMap[name] {
 			// other peer has something, we don't
 			otherHasThisDoesnt = true // does not seem possible really
@@ -114,15 +115,15 @@ func (ms *MessageStorage) AddRumorMessage(rmsg *RumorMessage) bool {
 		log.Warn("got sender with empty origin!")
 	}
 
-	if ms.Messages[origin] == nil {
-		ms.Messages[origin] = make([]*RumorMessage, 0)
+	if ms.RumorMessages[origin] == nil {
+		ms.RumorMessages[origin] = make([]*RumorMessage, 0)
 	}
 
 	rmsgId := rmsg.ID - 1 // numeration from 1
 	if rmsgId < ms.VectorClock[origin] {
 		return false // not new
 	} else if rmsgId == ms.VectorClock[origin] {
-		ms.Messages[origin] = append(ms.Messages[origin], rmsg)
+		ms.RumorMessages[origin] = append(ms.RumorMessages[origin], rmsg)
 		if rmsg.Text != "" {
 			// if not rumor-routing
 			ms.NonEmptyMessagesChronOrder = append(ms.NonEmptyMessagesChronOrder, rmsg)
@@ -136,12 +137,12 @@ func (ms *MessageStorage) AddRumorMessage(rmsg *RumorMessage) bool {
 			// fill missing messages with zero text
 			for i := ms.VectorClock[origin]; i < rmsgId; i++ {
 				brokenRmsg := &RumorMessage{ID: i, OriginalName: origin, Text: "error - chronological order broken - error"}
-				ms.Messages[origin] = append(ms.Messages[origin], brokenRmsg)
+				ms.RumorMessages[origin] = append(ms.RumorMessages[origin], brokenRmsg)
 				ms.NonEmptyMessagesChronOrder = append(ms.NonEmptyMessagesChronOrder, brokenRmsg)
 				ms.VectorClock[origin]++
 			}
 
-			ms.Messages[origin] = append(ms.Messages[origin], rmsg)
+			ms.RumorMessages[origin] = append(ms.RumorMessages[origin], rmsg)
 			ms.VectorClock[origin]++
 		} else {
 			return false // messages arrived not in chronological order, so we will not store them, but will wait for chronological order
@@ -152,4 +153,17 @@ func (ms *MessageStorage) AddRumorMessage(rmsg *RumorMessage) bool {
 	log.Debug("Vector clock is:", ms.VectorClock)
 
 	return true // was new
+}
+
+func (ms *MessageStorage) AddPrivateMessage(pmsg *PrivateMessage, currentGossiperName string) bool {
+	ms.mux.Lock()
+	defer ms.mux.Unlock()
+
+	if pmsg.Destination != currentGossiperName {
+		log.Warn("want to add odd message to db")
+		return false
+	}
+
+	ms.PrivateMessages = append(ms.PrivateMessages, pmsg)
+	return true
 }

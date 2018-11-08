@@ -13,7 +13,7 @@ func StartRouteRumorsSpreading(gossiper *Gossiper, rtimer int) {
 	logger.Info("started route-rumor-spreading thread")
 
 	// always send first route-rumor
-	SendMessageToLocalPort("", gossiper.GetClientAddress().Port, logger)
+	SendRouteRumorMessageToLocalPort(gossiper.GetClientAddress().Port, logger)
 	if rtimer <= 0 {
 		return // timer disabled
 	}
@@ -22,7 +22,7 @@ func StartRouteRumorsSpreading(gossiper *Gossiper, rtimer int) {
 		ticker := time.NewTicker(time.Duration(rtimer) * time.Second)
 		<-ticker.C // wait for the timer to shoot
 
-		SendMessageToLocalPort("", gossiper.GetClientAddress().Port, logger)
+		SendRouteRumorMessageToLocalPort(gossiper.GetClientAddress().Port, logger)
 	}
 
 }

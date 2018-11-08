@@ -50,12 +50,12 @@ type PeerStatus struct {
 }
 
 type ClientMessage struct {
-	RumorOrSimple *ClientRumorOrSimpleMessage
-	RouteRumor    *ClientRouteRumorMessage
-	Private       *ClientPrivateMessage
+	Rumor      *ClientRumorMessage
+	RouteRumor *ClientRouteRumorMessage
+	Private    *ClientPrivateMessage
 }
 
-type ClientRumorOrSimpleMessage struct {
+type ClientRumorMessage struct {
 	Text string
 }
 
@@ -70,23 +70,18 @@ func (rmsg *RumorMessage) String() string {
 	return rmsg.OriginalName + ":" + strconv.Itoa(int(rmsg.ID))
 }
 
-func (cmsg *ClientMessage) Print() {
-	if cmsg.RumorOrSimple != nil {
-		cmsg.RumorOrSimple.Print()
+func (cmsg *ClientMessage) Print() bool {
+	if cmsg.Rumor != nil {
+		rcmsg := cmsg.Rumor
+		fmt.Println("CLIENT MESSAGE " + rcmsg.Text)
 	} else if cmsg.Private != nil {
-		cmsg.Private.Print()
+		pcmsg := cmsg.Private
+		fmt.Println("CLIENT PRIVATE MESSAGE TO " + pcmsg.Destination + ": " + pcmsg.Text)
+	} else {
+		// client route rumor message
+		return false
 	}
-}
-
-func (msg *ClientRumorOrSimpleMessage) Print() {
-	if msg.Text == "" {
-		return
-	}
-	fmt.Println("CLIENT MESSAGE " + msg.Text)
-}
-
-func (pmsg *ClientPrivateMessage) Print() {
-	fmt.Println("CLIENT PRIVATE MESSAGE TO " + pmsg.Destination + ": " + pmsg.Text)
+	return true
 }
 
 func (agp *AddressedGossipPacket) Print() {
@@ -105,5 +100,8 @@ func (agp *AddressedGossipPacket) Print() {
 	} else if gp.Simple != nil {
 		smsg := gp.Simple
 		fmt.Println("SIMPLE MESSAGE origin " + smsg.OriginalName + " from " + smsg.RelayPeerAddr + " contents " + smsg.Text)
+	} else if gp.Private != nil {
+		pmsg := gp.Private
+		fmt.Println("PRIVATE MESSAGE origin " + pmsg.Origin + " from " + agp.Address.String() + " destination " + pmsg.Destination + " hoplimit " + fmt.Sprint(pmsg.HopLimit) + " contents " + pmsg.Text)
 	}
 }
