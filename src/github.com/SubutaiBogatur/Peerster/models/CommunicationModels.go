@@ -105,7 +105,7 @@ func (agp *AddressedGossipPacket) Print() bool {
 		fmt.Println("SIMPLE MESSAGE origin " + smsg.OriginalName + " from " + smsg.RelayPeerAddr + " contents " + smsg.Text)
 	} else if gp.Private != nil {
 		pmsg := gp.Private
-		fmt.Println("PRIVATE origin " + pmsg.Origin + " from " + agp.Address.String() + " destination " + pmsg.Destination + " contents " + pmsg.Text)
+		fmt.Println("PRIVATE origin " + pmsg.Origin + " hop-limit " + fmt.Sprint(pmsg.HopLimit) + " contents " + pmsg.Text)
 	} else {
 		return false // never should happen
 	}

@@ -46,6 +46,11 @@ cd ..
 # let the gossipers initialize
 sleep 1
 
+# some init messages, so a and d will know about each other (with only rtimer initalization prob, that they know each other equals 2*(9/16)-(9/16)**2~0.8
+./client/client -UIPort=$aUIPort -msg="LetsKnowEachOther1"
+./client/client -UIPort=$dUIPort -msg="LetsKnowEachOther2"
+./client/client -UIPort=$aUIPort -msg="LetsKnowEachOther3"
+./client/client -UIPort=$dUIPort -msg="LetsKnowEachOther4"
 # private msgs:
 ./client/client -UIPort=$aUIPort -dest="d" -msg=$msgA1
 ./client/client -UIPort=$dUIPort -dest="a" -msg=$msgD1
@@ -57,6 +62,9 @@ sleep 1
 # private msgs:
 ./client/client -UIPort=$aUIPort -dest="d" -msg=$msgA3
 ./client/client -UIPort=$dUIPort -dest="a" -msg=$msgD3
+# final rumors:
+./client/client -UIPort=$aUIPort -msg="LetsKnowEachOther5"
+./client/client -UIPort=$dUIPort -msg="LetsKnowEachOther6"
 
 
 # let gossipers work for some time
@@ -95,19 +103,19 @@ fi
 echo -e "${RED}###CHECK that private messages arrived${NC}"
 failed="F"
 
-if !(grep -q "PRIVATE origin d from $bAddr destination a contents $msgD1" "A.out") ; then
+if !(grep -q "PRIVATE origin d hop-limit [0-9]* contents $msgD1" "A.out") ; then
         echo "failed21"
         failed="T"
 fi
-if !(grep -q "PRIVATE origin d from $bAddr destination a contents $msgD3" "A.out") ; then
+if !(grep -q "PRIVATE origin d hop-limit [0-9]* contents $msgD3" "A.out") ; then
         echo "failed22"
         failed="T"
 fi
-if !(grep -q "PRIVATE origin a from $cAddr destination d contents $msgA2" "D.out") ; then
+if !(grep -q "PRIVATE origin a hop-limit [0-9]* contents $msgA2" "D.out") ; then
         echo "failed23"
         failed="T"
 fi
-if !(grep -q "PRIVATE origin a from $cAddr destination d contents $msgA3" "D.out") ; then
+if !(grep -q "PRIVATE origin a hop-limit [0-9]* contents $msgA3" "D.out") ; then
         echo "failed24"
         failed="T"
 fi

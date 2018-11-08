@@ -23,6 +23,7 @@ import (
 // * peer-reader        thread : the only port reading from peer socket. Sends GossipPackets to message-processor
 // * peer-writer        thread : the only port writing to peer socket. Listens to channel for GossipPackets and writes them
 // * anti-entropy-timer thread : goroutine sends a status to random peer every timeout seconds
+// * route-rumoring     thread : once in a timer sends empty rumor message to random peers, so everyone will know about this origin (accesses nothing)
 // * message-processor  thread : is an abstraction on client-listener, peer-listener threads. Receives all the messages and for every message:
 //     + rumor-msg  : upd status, send status back, send rumor randomly further, start rumor-mongering thread waiting for status
 //     + status-msg : push it to one of the rumor-mongering threads (if rumor mongering is not in progress, then compare statuses and start it)
@@ -445,7 +446,10 @@ func (g *Gossiper) processAddressedRumorMessage(rmsg *RumorMessage, address *UDP
 	if g.messageStorage.IsNewMessage(rmsg) {
 		// update next hop data
 		g.nextHopMux.Lock()
-		g.nextHop[rmsg.OriginalName] = address
+		if g.nextHop[rmsg.OriginalName].String() != address.String() {
+			fmt.Println("DSDV " + rmsg.OriginalName + " " + address.String())
+			g.nextHop[rmsg.OriginalName] = address
+		}
 		g.nextHopMux.Unlock()
 	}
 
@@ -471,10 +475,11 @@ func (g *Gossiper) processRumorMessage(rmsg *RumorMessage) {
 }
 
 func (g *Gossiper) processAddressedPrivateMessage(pmsg *PrivateMessage, address *UDPAddr) {
-	g.nextHopMux.Lock()
-	g.nextHop[pmsg.Origin] = address
-	g.l.Debug("next hop map is: ", g.nextHop)
-	g.nextHopMux.Unlock()
+	//  commented in order to have all announcements from rumor message and to pass tests, may uncomment, really not that important
+	//g.nextHopMux.Lock()
+	//g.nextHop[pmsg.Origin] = address
+	//g.l.Debug("next hop map is: ", g.nextHop)
+	//g.nextHopMux.Unlock()
 	g.processPrivateMessage(pmsg)
 }
 

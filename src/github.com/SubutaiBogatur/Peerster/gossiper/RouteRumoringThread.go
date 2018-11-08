@@ -8,7 +8,6 @@ import (
 
 // route-rumors thread
 func StartRouteRumorsSpreading(gossiper *Gossiper, rtimer int) {
-	// have own logger as own important thread, should be in own file, but too small
 	logger := log.WithField("bin", "rr").WithField("a", gossiper.GetPeerAddress().String())
 	logger.Info("started route-rumor-spreading thread")
 
@@ -24,5 +23,4 @@ func StartRouteRumorsSpreading(gossiper *Gossiper, rtimer int) {
 
 		SendRouteRumorMessageToLocalPort(gossiper.GetClientAddress().Port, logger)
 	}
-
 }
