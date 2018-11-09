@@ -26,12 +26,16 @@ import (
 // * anti-entropy-timer thread : goroutine sends a status to random peer every timeout seconds
 // * route-rumoring     thread : once in a timer sends empty rumor message to random peers, so everyone will know about this origin (accesses nothing)
 // * message-processor  thread : is an abstraction on client-listener, peer-listener threads. Receives all the messages and for every message:
-//     + rumor-msg  : upd status, send status back, send rumor randomly further, start rumor-mongering thread waiting for status
-//     + status-msg : push it to one of the rumor-mongering threads (if rumor mongering is not in progress, then compare statuses and start it)
+//     + rumor-msg    : upd status, send status back, send rumor randomly further, start rumor-mongering thread waiting for status
+//     + status-msg   : push it to one of the rumor-mongering threads (if rumor mongering is not in progress, then compare statuses and start it)
+//     + private      : ezy - forward if needed, else display
+//     + data-request : just answer with needed data, no state saved
+//     + data-reply   : answer with next request (if needed) and start file-downloading thread to wait for next data-reply or timeout
 // * rumor-mongering    thread : thread waits either for status-msg to arrive or for timeout and stores rumor-msg, it was initiated for
 //     + status-msg : cmp (store sync-safe Map for VectorClock, which are edited from message-processor) and send new msg via peer-communicator
 //     + timeout    : 1/2 & send new rumor-msg via peer-communicator
 // * webserver          thread : listens to http-requests on a given port and reads / writes from gossiper object
+// * file-downloading   thread : thread waits either for DataReply msg from fixed origin or for timeout
 
 // command line arguments
 var (
@@ -40,8 +44,12 @@ var (
 	peerMessagesToSend      = make(chan *AddressedGossipPacket)
 
 	// map is accessed from message-processor and from rumor-mongering threads, should be converted to sync.Map{}
-	statusesChannels   = make(map[string]chan *StatusPacket) // peerIp -> channel, where rumor-mongering goroutine is waiting for status feedback
-	statusesChannelMux sync.Mutex
+	statusesChannels    = make(map[string]chan *StatusPacket) // peerIp -> channel, where rumor-mongering goroutine is waiting for status feedback
+	statusesChannelsMux sync.Mutex
+
+	// accessed from message-processor and from file-downloading threads
+	downloadingFilesChannels    = make(map[string]chan *DataReply)
+	downloadingFilesChannelsMux sync.Mutex
 )
 
 const (
@@ -389,7 +397,7 @@ func (g *Gossiper) processClientMessage(cmsg *ClientMessage) {
 		g.sharedFilesManager.ShareFile(cmsg.ToShare.Path)
 	} else if cmsg.ToDownload != nil {
 		g.l.Info("got client to download message")
-		// todo
+		g.processClientDataRequest(cmsg.ToDownload)
 	}
 }
 
@@ -436,15 +444,15 @@ func (g *Gossiper) processAddressedSimpleMessage(smsg *SimpleMessage, address *U
 }
 
 func (g *Gossiper) processAddressedStatusPacket(sp *StatusPacket, address *UDPAddr) {
-	statusesChannelMux.Lock()
+	statusesChannelsMux.Lock()
 	if val, isPresent := statusesChannels[address.String()]; isPresent {
 		g.l.Info("status from " + address.String() + " found in map, forwarding it to corresponding goroutine...")
 		val <- sp
 		delete(statusesChannels, address.String()) // goroutine cannot eat more, than one status packet, so delete it from map
-		statusesChannelMux.Unlock()
+		statusesChannelsMux.Unlock()
 		return
 	}
-	statusesChannelMux.Unlock()
+	statusesChannelsMux.Unlock()
 
 	g.l.Info("got status not from map, interesting")
 	rmsg, otherHasSomethingNew := g.messageStorage.Diff(sp)
@@ -539,8 +547,8 @@ func (g *Gossiper) processDataRequest(drqmsg *DataRequest) {
 			return
 		}
 
-		drpmsg := &DataReply{HashValue:drqmsg.HashValue, Origin:gossiperName, Destination:drqmsg.Origin, HopLimit:PrivateMessageHopLimit, Data:requestedData}
-		agp := &AddressedGossipPacket{Address: g.nextHop[drpmsg.Destination], Packet: &GossipPacket{DataReply:drpmsg}}
+		drpmsg := &DataReply{HashValue: drqmsg.HashValue, Origin: gossiperName, Destination: drqmsg.Origin, HopLimit: PrivateMessageHopLimit, Data: requestedData}
+		agp := &AddressedGossipPacket{Address: g.nextHop[drpmsg.Destination], Packet: &GossipPacket{DataReply: drpmsg}}
 		peerMessagesToSend <- agp
 	} else if g.nextHop[drqmsg.Destination] != nil {
 		if drqmsg.HopLimit <= 0 {
@@ -553,6 +561,10 @@ func (g *Gossiper) processDataRequest(drqmsg *DataRequest) {
 	} else {
 		log.Warn("don't know such destination, drop the message..")
 	}
+}
+
+func (g *Gossiper) processClientDataRequest(cdrqmsg *ClientToDownloadMessage) {
+	// todo: goroutine-management + testing
 }
 
 func (g *Gossiper) processAddressedDataReply(drpmsg *DataReply, address *UDPAddr) {
@@ -572,15 +584,15 @@ func (g *Gossiper) spreadTheRumor(rmsg *RumorMessage, peer *UDPAddr) {
 		peer = g.getRandomPeer()
 	}
 
-	statusesChannelMux.Lock()
+	statusesChannelsMux.Lock()
 	if _, contains := statusesChannels[peer.String()]; contains {
 		g.l.Warn("rumormongering with this peer is already in progress, this case is too hard for me")
-		statusesChannelMux.Unlock()
+		statusesChannelsMux.Unlock()
 		return
 	}
 	ch := make(chan *StatusPacket)
 	statusesChannels[peer.String()] = ch
-	statusesChannelMux.Unlock()
+	statusesChannelsMux.Unlock()
 
 	g.l.Info("rumor sent further to " + peer.String())
 	peerMessagesToSend <- &AddressedGossipPacket{Address: peer, Packet: &GossipPacket{Rumor: rmsg}}
@@ -600,9 +612,9 @@ func (g *Gossiper) startRumorMongeringThread(messageBeingRumored *RumorMessage, 
 		g.l.Info("peer " + peer.String() + " exceeded the timeout")
 
 		// clean the map
-		statusesChannelMux.Lock()
+		statusesChannelsMux.Lock()
 		delete(statusesChannels, peer.String())
-		statusesChannelMux.Unlock()
+		statusesChannelsMux.Unlock()
 
 		g.flipRumorMongeringCoin(messageBeingRumored)
 	case statusPacket := <-ch:

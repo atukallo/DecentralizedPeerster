@@ -11,6 +11,9 @@ const (
 	SharedFilesPath       = "_SharedFiles"
 	SharedFilesChunksPath = SharedFilesPath + "/" + "chunks"
 
+	DownloadsPath       = "_Downloads"
+	DownloadsChunksPath = DownloadsPath + "/" + "chunks"
+
 	FileCommonMode = 0755                                 // owner=rwx, all others=rx
 	//MaxFileSize    = (FileChunkSize / 32) * FileChunkSize // number of hashes * size of chunk
 	MaxFileSize    = 100000// number of hashes * size of chunk

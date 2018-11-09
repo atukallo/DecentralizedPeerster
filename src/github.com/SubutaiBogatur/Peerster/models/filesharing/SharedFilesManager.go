@@ -41,24 +41,19 @@ func (sfm *SharedFilesManager) ShareFile(path string) {
 }
 
 func (sfm *SharedFilesManager) GetChunk(hashValue []byte) []byte {
-	if len(hashValue) != 32 {
-		log.Error("invalid hash value passed")
+	typedHashValue := GetTypeStrictHash(hashValue)
+	if typedHashValue == nil {
 		return nil
 	}
 
-	var typedHashValue [32]byte
-	for i, b := range hashValue {
-		typedHashValue[i] = b
-	}
-
-	if sf, ok := sfm.sharedFiles[typedHashValue]; ok {
+	if sf, ok := sfm.sharedFiles[*typedHashValue]; ok {
 		return sf.MetaSlice // metahash was given to function, returning metafile
 	}
 
 	// else try to find a chunk with such hash, number of sf is small, so not that long
 	for _, sf := range sfm.sharedFiles {
-		if sf.chunkExists(typedHashValue) {
-			return sf.getChunk(typedHashValue)
+		if sf.chunkExists(*typedHashValue) {
+			return sf.getChunk(*typedHashValue)
 		}
 	}
 

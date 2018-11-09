@@ -19,3 +19,17 @@ func CheckError(err error, logger *log.Entry) bool {
 	}
 	return false
 }
+
+func GetTypeStrictHash(hashValue []byte) *[32]byte {
+	if len(hashValue) != 32 {
+		log.Error("invalid hash value passed")
+		return nil
+	}
+
+	var typedHashValue [32]byte
+	for i, b := range hashValue {
+		typedHashValue[i] = b
+	}
+
+	return &typedHashValue
+}
