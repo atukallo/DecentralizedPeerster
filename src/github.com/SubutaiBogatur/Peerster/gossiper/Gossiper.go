@@ -3,6 +3,7 @@ package gossiper
 import (
 	"fmt"
 	. "github.com/SubutaiBogatur/Peerster/models"
+	. "github.com/SubutaiBogatur/Peerster/models/filesharing"
 	. "github.com/SubutaiBogatur/Peerster/utils"
 	"github.com/dedis/protobuf"
 	log "github.com/sirupsen/logrus"
@@ -67,7 +68,8 @@ type Gossiper struct {
 	nextHop    map[string]*UDPAddr // accessed from message-processor and from webserver (for keys)
 	nextHopMux sync.Mutex
 
-	messageStorage *MessageStorage // accessed eg from message-processor and from rumor-mongering, is hard-synchronized
+	messageStorage     *MessageStorage     // accessed eg from message-processor and from rumor-mongering, is hard-synchronized
+	sharedFilesManager *SharedFilesManager // accessed only from gossiper
 
 	isSimpleMode bool       // in simple mode sending only simple messages
 	l            *log.Entry // logger
@@ -230,6 +232,16 @@ func (g *Gossiper) GetPrivateMessages() *[]PrivateMessage {
 	return g.messageStorage.GetPrivateMessagesCopy()
 }
 
+func (g *Gossiper) updateNextHop(origin string, relay *UDPAddr) {
+	g.nextHopMux.Lock()
+	addr, ok := g.nextHop[origin]
+	if ok && addr.String() != relay.String() {
+		fmt.Println("DSDV " + origin + " " + relay.String())
+		g.nextHop[origin] = relay
+	}
+	g.nextHopMux.Unlock()
+}
+
 // client-reader thread
 func (g *Gossiper) StartClientReader() {
 	g.l.Info("starting reading bytes on client: " + g.clientAddress.String() + " thread")
@@ -372,6 +384,12 @@ func (g *Gossiper) processClientMessage(cmsg *ClientMessage) {
 		g.l.Info("got client private message")
 		pmsg := &PrivateMessage{Origin: gossiperName, ID: 0, Text: cmsg.Private.Text, Destination: cmsg.Private.Destination, HopLimit: PrivateMessageHopLimit}
 		g.processPrivateMessage(pmsg)
+	} else if cmsg.ToShare != nil {
+		g.l.Info("got client to share message")
+		g.sharedFilesManager.ShareFile(cmsg.ToShare.Path)
+	} else if cmsg.ToDownload != nil {
+		g.l.Info("got client to download message")
+		// todo
 	}
 }
 
@@ -393,6 +411,12 @@ func (g *Gossiper) processAddressedGossipPacket(agp *AddressedGossipPacket) {
 	} else if gp.Private != nil {
 		g.l.Info("got private from " + address.String())
 		g.processAddressedPrivateMessage(gp.Private, address)
+	} else if gp.DataRequest != nil {
+		g.l.Info("got data request message")
+		g.processAddressedDataRequest(gp.DataRequest, address)
+	} else if gp.DataReply != nil {
+		g.l.Info("got data reply message")
+
 	}
 }
 
@@ -445,12 +469,7 @@ func (g *Gossiper) processAddressedRumorMessage(rmsg *RumorMessage, address *UDP
 
 	if g.messageStorage.IsNewMessage(rmsg) {
 		// update next hop data
-		g.nextHopMux.Lock()
-		if g.nextHop[rmsg.OriginalName].String() != address.String() {
-			fmt.Println("DSDV " + rmsg.OriginalName + " " + address.String())
-			g.nextHop[rmsg.OriginalName] = address
-		}
-		g.nextHopMux.Unlock()
+
 	}
 
 	g.processRumorMessage(rmsg)
@@ -476,13 +495,11 @@ func (g *Gossiper) processRumorMessage(rmsg *RumorMessage) {
 
 func (g *Gossiper) processAddressedPrivateMessage(pmsg *PrivateMessage, address *UDPAddr) {
 	//  commented in order to have all announcements from rumor message and to pass tests, may uncomment, really not that important
-	//g.nextHopMux.Lock()
-	//g.nextHop[pmsg.Origin] = address
-	//g.l.Debug("next hop map is: ", g.nextHop)
-	//g.nextHopMux.Unlock()
+	g.updateNextHop(pmsg.Origin, address)
 	g.processPrivateMessage(pmsg)
 }
 
+// in functions below copy-paste is present, but moving it to abstract functions is too resource-taking
 func (g *Gossiper) processPrivateMessage(pmsg *PrivateMessage) {
 	g.nextHopMux.Lock()
 	defer g.nextHopMux.Unlock()
@@ -490,10 +507,8 @@ func (g *Gossiper) processPrivateMessage(pmsg *PrivateMessage) {
 	gossiperName := g.name.Load().(string)
 
 	if pmsg.Destination == gossiperName {
-		log.Info("got new private message from " + pmsg.Origin)
 		g.messageStorage.AddPrivateMessage(pmsg, gossiperName)
 	} else if g.nextHop[pmsg.Destination] != nil {
-		log.Info("got private message and forwarding it further")
 		if pmsg.HopLimit <= 0 {
 			log.Warn("hop limit for forwarding exceeded, drop the msg..")
 		} else {
@@ -504,6 +519,45 @@ func (g *Gossiper) processPrivateMessage(pmsg *PrivateMessage) {
 	} else {
 		log.Warn("don't know such destination, drop the message..")
 	}
+}
+
+func (g *Gossiper) processAddressedDataRequest(drqmsg *DataRequest, address *UDPAddr) {
+	g.updateNextHop(drqmsg.Origin, address)
+	g.processDataRequest(drqmsg)
+}
+
+func (g *Gossiper) processDataRequest(drqmsg *DataRequest) {
+	g.nextHopMux.Lock()
+	defer g.nextHopMux.Unlock()
+
+	gossiperName := g.name.Load().(string)
+
+	if drqmsg.Destination == gossiperName {
+		requestedData := g.sharedFilesManager.GetChunk(drqmsg.HashValue)
+		if requestedData == nil {
+			log.Error("requested unexisting chunk")
+			return
+		}
+
+		drpmsg := &DataReply{HashValue:drqmsg.HashValue, Origin:gossiperName, Destination:drqmsg.Origin, HopLimit:PrivateMessageHopLimit, Data:requestedData}
+		agp := &AddressedGossipPacket{Address: g.nextHop[drpmsg.Destination], Packet: &GossipPacket{DataReply:drpmsg}}
+		peerMessagesToSend <- agp
+	} else if g.nextHop[drqmsg.Destination] != nil {
+		if drqmsg.HopLimit <= 0 {
+			log.Warn("hop limit for forwarding exceeded, drop the msg..")
+		} else {
+			drqmsg.HopLimit = drqmsg.HopLimit - 1
+			agp := &AddressedGossipPacket{Address: g.nextHop[drqmsg.Destination], Packet: &GossipPacket{DataRequest: drqmsg}}
+			peerMessagesToSend <- agp
+		}
+	} else {
+		log.Warn("don't know such destination, drop the message..")
+	}
+}
+
+func (g *Gossiper) processAddressedDataReply(drpmsg *DataReply, address *UDPAddr) {
+	g.updateNextHop(drpmsg.Origin, address)
+
 }
 
 // -------------------------------------------

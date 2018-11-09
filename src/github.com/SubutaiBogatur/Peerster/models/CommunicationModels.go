@@ -1,6 +1,7 @@
 package models
 
 import (
+	"encoding/hex"
 	"fmt"
 	"net"
 	"strconv"
@@ -13,24 +14,18 @@ type AddressedGossipPacket struct {
 
 // the invariant on the packet is that only one of the fields is not nil
 type GossipPacket struct {
-	Simple  *SimpleMessage
-	Rumor   *RumorMessage
-	Status  *StatusPacket
-	Private *PrivateMessage
+	Simple      *SimpleMessage
+	Rumor       *RumorMessage
+	Status      *StatusPacket
+	Private     *PrivateMessage
+	DataRequest *DataRequest
+	DataReply   *DataReply
 }
 
 type SimpleMessage struct {
 	OriginalName  string // name of original gossiper sender
 	RelayPeerAddr string // address of latest peer retranslator in the form ip:port
 	Text          string
-}
-
-type PrivateMessage struct {
-	Origin      string
-	ID          uint32
-	Text        string
-	Destination string
-	HopLimit    uint32
 }
 
 type RumorMessage struct {
@@ -49,10 +44,35 @@ type PeerStatus struct {
 	NextID     uint32
 }
 
+type PrivateMessage struct {
+	Origin      string
+	ID          uint32
+	Text        string
+	Destination string
+	HopLimit    uint32
+}
+
+type DataRequest struct {
+	Origin      string
+	Destination string
+	HopLimit    uint32
+	HashValue   []byte
+}
+
+type DataReply struct {
+	Origin      string
+	Destination string
+	HopLimit    uint32
+	HashValue   []byte
+	Data        []byte
+}
+
 type ClientMessage struct {
 	Rumor      *ClientRumorMessage
 	RouteRumor *ClientRouteRumorMessage
 	Private    *ClientPrivateMessage
+	ToShare    *ClientToShareMessage
+	ToDownload *ClientToDownloadMessage
 }
 
 type ClientRumorMessage struct {
@@ -66,6 +86,16 @@ type ClientPrivateMessage struct {
 	Destination string
 }
 
+type ClientToShareMessage struct {
+	Path string // path to file relative to _SharedFiles folder
+}
+
+type ClientToDownloadMessage struct {
+	Name        string // name to give to file after downloading finishes
+	Destination string
+	HashValue   [32]byte
+}
+
 func (rmsg *RumorMessage) String() string {
 	return rmsg.OriginalName + ":" + strconv.Itoa(int(rmsg.ID))
 }
@@ -77,6 +107,12 @@ func (cmsg *ClientMessage) Print() bool {
 	} else if cmsg.Private != nil {
 		pcmsg := cmsg.Private
 		fmt.Println("CLIENT PRIVATE TO " + pcmsg.Destination + ": " + pcmsg.Text)
+	} else if cmsg.ToShare != nil {
+		tscmsg := cmsg.ToShare
+		fmt.Println("CLIENT SHARE REQUEST: " + tscmsg.Path)
+	} else if cmsg.ToDownload != nil {
+		tdcmsg := cmsg.ToDownload
+		fmt.Println("CLIENT DOWNLOAD REQUEST: " + tdcmsg.Name + " from " + tdcmsg.Destination + " hash " + hex.EncodeToString(tdcmsg.HashValue[:]))
 	} else {
 		// client route rumor message
 		return false
@@ -106,6 +142,12 @@ func (agp *AddressedGossipPacket) Print() bool {
 	} else if gp.Private != nil {
 		pmsg := gp.Private
 		fmt.Println("PRIVATE origin " + pmsg.Origin + " hop-limit " + fmt.Sprint(pmsg.HopLimit) + " contents " + pmsg.Text)
+	} else if gp.DataReply != nil {
+		drpmsg := gp.DataReply
+		fmt.Println("REPLY origin " + drpmsg.Origin + " hash " + hex.EncodeToString(drpmsg.HashValue[:]))
+	} else if gp.DataRequest != nil {
+		drqmsg := gp.DataRequest
+		fmt.Println("REQUEST destination " + drqmsg.Destination + " hash " + hex.EncodeToString(drqmsg.HashValue[:]))
 	} else {
 		return false // never should happen
 	}

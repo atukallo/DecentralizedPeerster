@@ -1,15 +1,16 @@
-package models
+package filesharing
 
 import (
 	"crypto/sha256"
 	"encoding/hex"
 	. "github.com/SubutaiBogatur/Peerster/utils"
+	log "github.com/sirupsen/logrus"
 	"io/ioutil"
 	"os"
 	"path/filepath"
 )
 
-type SharedFile struct {
+type sharedFile struct {
 	// chunks by itself are stored in _SharedFiles/{Name}/{Hash as hex string}.chunk
 
 	Name string
@@ -20,7 +21,7 @@ type SharedFile struct {
 	MetaSet   map[[32]byte]bool // stores hashes of chunks
 }
 
-func ShareFile(path string) *SharedFile {
+func shareFile(path string) *sharedFile {
 	path, err := filepath.Abs(path)
 	if CheckErr(err) {
 		return nil
@@ -37,7 +38,7 @@ func ShareFile(path string) *SharedFile {
 		os.Mkdir(SharedFilesChunksPath, FileCommonMode)
 	}
 
-	sharedFile := SharedFile{Name: filepath.Base(path)}
+	sharedFile := sharedFile{Name: filepath.Base(path)}
 
 	chunksPath := filepath.Join(SharedFilesChunksPath, sharedFile.Name)
 	if _, err := os.Stat(chunksPath); !os.IsNotExist(err) {
@@ -85,4 +86,29 @@ func ShareFile(path string) *SharedFile {
 	sharedFile.MetaHash = sha256.Sum256(sharedFile.MetaSlice)
 
 	return &sharedFile
+}
+
+func (sf *sharedFile) chunkExists(chunkHash [32]byte) bool {
+	_, ok := sf.MetaSet[chunkHash]
+	return ok
+}
+
+func (sf *sharedFile) getChunk(chunkHash [32]byte) []byte {
+	if !sf.chunkExists(chunkHash) {
+		return nil
+	}
+
+	chunkFileName := hex.EncodeToString(chunkHash[:])
+	chunkPath := filepath.Join(SharedFilesChunksPath, sf.Name, chunkFileName)
+	if _, err := os.Stat(chunkPath); os.IsNotExist(err) {
+		log.Error("existing chunk cannot be found!!!")
+		return nil
+	}
+
+	chunkBytes, err := ioutil.ReadFile(chunkPath)
+	if CheckErr(err) {
+		return nil
+	}
+
+	return chunkBytes
 }

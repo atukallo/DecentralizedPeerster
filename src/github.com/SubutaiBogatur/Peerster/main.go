@@ -3,7 +3,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"github.com/SubutaiBogatur/Peerster/models"
 	. "github.com/SubutaiBogatur/Peerster/utils"
 	log "github.com/sirupsen/logrus"
 )
@@ -30,7 +29,7 @@ func main() {
 
 	flag.Parse()
 
-	models.ShareFile(SharedFilesPath + "/carlton.txt")
+	//models.ShareFile(SharedFilesPath + "/carlton.txt")
 
 	//g, err := NewGossiper(*name, *uiport, *gossipAddr, *peers, *simpleMode)
 	//if CheckErr(err) {
