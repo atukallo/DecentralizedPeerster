@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	. "github.com/SubutaiBogatur/Peerster/gossiper"
 	. "github.com/SubutaiBogatur/Peerster/utils"
+	. "github.com/SubutaiBogatur/Peerster/utils/send-utils"
 	"github.com/gorilla/mux"
 	log "github.com/sirupsen/logrus"
 	"io/ioutil"

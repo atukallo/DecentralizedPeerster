@@ -3,7 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
-	. "github.com/SubutaiBogatur/Peerster/utils"
+	. "github.com/SubutaiBogatur/Peerster/utils/send-utils"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -12,6 +12,7 @@ var (
 	UIPort = flag.Int("UIPort", 4848, "Port, where gossiper is listening for a client. Gossiper is listening on 127.0.0.1:{port}")
 	msg    = flag.String("msg", "tmptmp", "Message to send to gossiper")
 	dest   = flag.String("dest", "", "Specify to send private message")
+	file   = flag.String("file", "", "File name in ../_SharedFiles directory")
 
 	logger = log.WithField("bin", "clt")
 )
