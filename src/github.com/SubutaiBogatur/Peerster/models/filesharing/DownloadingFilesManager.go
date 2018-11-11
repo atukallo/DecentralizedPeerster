@@ -32,6 +32,8 @@ func InitDownloadingFilesManager() *DownloadingFilesManager {
 func (dfm *DownloadingFilesManager) StartDownloadingFromOrigin(origin string, fileName string, metahash [32]byte) bool {
 	// updates data in map atomically
 	dfm.m.Lock()
+	defer dfm.m.Unlock()
+
 	if _, ok := dfm.downloadingFiles[origin]; ok {
 		log.Info("already downloading from this guy")
 		return false
@@ -39,7 +41,6 @@ func (dfm *DownloadingFilesManager) StartDownloadingFromOrigin(origin string, fi
 
 	df := InitDownloadingFile(fileName, metahash)
 	dfm.downloadingFiles[origin] = df
-	dfm.m.Unlock()
 
 	return true
 }
