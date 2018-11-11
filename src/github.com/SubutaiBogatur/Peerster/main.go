@@ -3,8 +3,12 @@ package main
 import (
 	"flag"
 	"fmt"
+	. "github.com/SubutaiBogatur/Peerster/gossiper"
 	. "github.com/SubutaiBogatur/Peerster/utils"
+	. "github.com/SubutaiBogatur/Peerster/webserver"
 	log "github.com/sirupsen/logrus"
+	"math/rand"
+	"time"
 )
 
 // command line arguments
@@ -31,28 +35,28 @@ func main() {
 
 	//models.ShareFile(SharedFilesPath + "/carlton.txt")
 
-	//g, err := NewGossiper(*name, *uiport, *gossipAddr, *peers, *simpleMode)
-	//if CheckErr(err) {
-	//	return
-	//}
-	//
-	//// set random seed
-	//rand.Seed(time.Now().Unix())
-	//
-	//go g.StartClientReader()
-	//go g.StartPeerReader()
-	//go g.StartPeerWriter()
-	//
-	//if !*noAntiEntropy {
-	//	go g.StartAntiEntropyTimer()
-	//}
-	//
-	//go StartRouteRumorsSpreading(g, *rtimer)
-	//if !*noWebserver {
-	//	go StartWebserver(g)
-	//}
-	//
-	//g.StartMessageProcessor() // goroutine dies, when app dies, so blocking function is called in main thread
+	g, err := NewGossiper(*name, *uiport, *gossipAddr, *peers, *simpleMode)
+	if CheckErr(err) {
+		return
+	}
+
+	// set random seed
+	rand.Seed(time.Now().Unix())
+
+	go g.StartClientReader()
+	go g.StartPeerReader()
+	go g.StartPeerWriter()
+
+	if !*noAntiEntropy {
+		go g.StartAntiEntropyTimer()
+	}
+
+	go StartRouteRumorsSpreading(g, *rtimer)
+	if !*noWebserver {
+		go StartWebserver(g)
+	}
+
+	g.StartMessageProcessor() // goroutine dies, when app dies, so blocking function is called in main thread
 
 	fmt.Println("gossiper finished")
 }

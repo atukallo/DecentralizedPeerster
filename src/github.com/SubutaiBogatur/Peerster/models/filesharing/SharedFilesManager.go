@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 )
 
+// accessed only from message-processor thread
 type SharedFilesManager struct {
 	sharedFiles map[[32]byte]*sharedFile
 }
@@ -18,6 +19,9 @@ func InitSharedFilesManager() *SharedFilesManager {
 	if _, err := os.Stat(SharedFilesChunksPath); !os.IsNotExist(err) {
 		os.RemoveAll(SharedFilesChunksPath)
 	}
+	if _, err := os.Stat(SharedFilesPath); os.IsNotExist(err) {
+		os.Mkdir(SharedFilesPath, FileCommonMode)
+	}
 	os.Mkdir(SharedFilesChunksPath, FileCommonMode)
 
 	return sfm
@@ -26,6 +30,12 @@ func InitSharedFilesManager() *SharedFilesManager {
 // accepts path relative to _SharedFiles directory
 func (sfm *SharedFilesManager) ShareFile(path string) {
 	path = filepath.Join(SharedFilesPath, path)
+	for _, v := range sfm.sharedFiles {
+		if v.Name == filepath.Base(path) {
+			log.Error("such file was already shared")
+		}
+	}
+
 	sf := shareFile(path)
 	if sf == nil {
 		log.Error("unable to share file")
@@ -40,23 +50,23 @@ func (sfm *SharedFilesManager) ShareFile(path string) {
 	sfm.sharedFiles[sf.MetaHash] = sf
 }
 
-func (sfm *SharedFilesManager) GetChunk(hashValue []byte) []byte {
-	typedHashValue := GetTypeStrictHash(hashValue)
-	if typedHashValue == nil {
+func (sfm *SharedFilesManager) GetChunkOrMetafile(hashValue []byte) []byte {
+	typedHashValue, err := GetTypeStrictHash(hashValue)
+	if CheckErr(err) {
 		return nil
 	}
 
-	if sf, ok := sfm.sharedFiles[*typedHashValue]; ok {
+	if sf, ok := sfm.sharedFiles[typedHashValue]; ok {
 		return sf.MetaSlice // metahash was given to function, returning metafile
 	}
 
-	// else try to find a chunk with such hash, number of sf is small, so not that long
+	// else try to find a chunk with such hash. Number of sf is small, so not that long
 	for _, sf := range sfm.sharedFiles {
-		if sf.chunkExists(*typedHashValue) {
-			return sf.getChunk(*typedHashValue)
+		if sf.chunkBelongsToFile(typedHashValue) {
+			return sf.getChunk(typedHashValue)
 		}
 	}
 
-	log.Warn("the chunk / metafile with requested hash not found")
+	log.Warn("the chunk or metafile with requested hash not found")
 	return nil
 }

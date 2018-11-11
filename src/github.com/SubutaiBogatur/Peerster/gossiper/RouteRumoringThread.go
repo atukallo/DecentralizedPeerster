@@ -1,7 +1,7 @@
 package gossiper
 
 import (
-	. "github.com/SubutaiBogatur/Peerster/utils"
+	. "github.com/SubutaiBogatur/Peerster/utils/send-utils"
 	log "github.com/sirupsen/logrus"
 	"time"
 )

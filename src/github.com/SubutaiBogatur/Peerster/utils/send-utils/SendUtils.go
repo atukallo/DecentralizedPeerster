@@ -1,6 +1,7 @@
 package send_utils
 
 import (
+	"encoding/hex"
 	. "github.com/SubutaiBogatur/Peerster/models"
 	. "github.com/SubutaiBogatur/Peerster/utils"
 	"github.com/dedis/protobuf"
@@ -49,6 +50,27 @@ func SendPrivateMessageToLocalPort(message string, destination string, port int,
 	pcmsg := &ClientPrivateMessage{Text: message, Destination: destination}
 	cmsg := &ClientMessage{Private: pcmsg}
 	sendMessageToLocalPort(cmsg, port, logger)
+}
+
+func SendToShareMessageToLocalPort(path string, port int, logger *log.Entry) {
+	tsmsg := &ClientToShareMessage{Path: path}
+	csmsg := &ClientMessage{ToShare: tsmsg}
+	sendMessageToLocalPort(csmsg, port, logger)
+}
+
+func SendToDownloadMessageToLocalPort(name string, hashString string, destination string, port int, logger *log.Entry) {
+	hashValue, err := hex.DecodeString(hashString)
+	if CheckErr(err) {
+		return
+	}
+	typedHashValue, err := GetTypeStrictHash(hashValue)
+	if CheckErr(err) {
+		return
+	}
+
+	tsmsg := &ClientToDownloadMessage{Name:name, Destination:destination, HashValue:typedHashValue}
+	csmsg := &ClientMessage{ToDownload: tsmsg}
+	sendMessageToLocalPort(csmsg, port, logger)
 }
 
 func sendMessageToLocalPort(cmsg *ClientMessage, port int, logger *log.Entry) {

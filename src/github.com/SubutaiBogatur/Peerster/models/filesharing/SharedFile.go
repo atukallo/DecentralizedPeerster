@@ -11,7 +11,7 @@ import (
 )
 
 type sharedFile struct {
-	// chunks by itself are stored in _SharedFiles/{Name}/{Hash as hex string}.chunk
+	// chunks by itself are stored in _SharedFiles/{Name}/{Hash as hex string}.chunk on disk
 
 	Name string
 	Size int // in bytes, not bigger then 2 * 1024 * 1024
@@ -28,6 +28,7 @@ func shareFile(path string) *sharedFile {
 	}
 
 	if stat, err := os.Stat(path); os.IsNotExist(err) || stat.IsDir() {
+		log.Error("file to share doesn't exist")
 		return nil
 	}
 
@@ -55,6 +56,7 @@ func shareFile(path string) *sharedFile {
 
 	sharedFile.Size = len(fileBytes)
 	if sharedFile.Size > MaxFileSize {
+		log.Warn("file was not read, because it exceedes maximum allowed length!")
 		return nil
 	}
 
@@ -62,14 +64,11 @@ func shareFile(path string) *sharedFile {
 	chunks := make([][]byte, 0, len(fileBytes)/FileChunkSize+1)
 	var curChunk = make([]byte, 0, FileChunkSize)
 	for i := 0; i < len(fileBytes); i++ {
-		if i%FileChunkSize == 0 && len(curChunk) != 0 {
+		curChunk = append(curChunk, fileBytes[i])
+		if (i+1)%FileChunkSize == 0 {
 			chunks = append(chunks, curChunk)
 			curChunk = make([]byte, 0, FileChunkSize)
 		}
-		curChunk = append(curChunk, fileBytes[i])
-	}
-	if len(curChunk) != 0 {
-		chunks = append(chunks, curChunk)
 	}
 
 	sharedFile.MetaSlice = make([]byte, 0, len(chunks)*32)
@@ -78,28 +77,27 @@ func shareFile(path string) *sharedFile {
 		chunkHash := sha256.Sum256(chunk)
 		sharedFile.MetaSlice = append(sharedFile.MetaSlice, chunkHash[:]...)
 		sharedFile.MetaSet[chunkHash] = true
-		chunkFileName := hex.EncodeToString(chunkHash[:])
-		ioutil.WriteFile(filepath.Join(chunksPath, chunkFileName), chunk, FileCommonMode)
+		ioutil.WriteFile(filepath.Join(chunksPath, GetChunkFileName(chunkHash)), chunk, FileCommonMode)
 		// now chunk won't be stored in ram
 	}
 
 	sharedFile.MetaHash = sha256.Sum256(sharedFile.MetaSlice)
+	ioutil.WriteFile(filepath.Join(chunksPath, hex.EncodeToString(sharedFile.MetaHash[:])) + ".metafile", sharedFile.MetaSlice, FileCommonMode)
 
 	return &sharedFile
 }
 
-func (sf *sharedFile) chunkExists(chunkHash [32]byte) bool {
+func (sf *sharedFile) chunkBelongsToFile(chunkHash [32]byte) bool {
 	_, ok := sf.MetaSet[chunkHash]
 	return ok
 }
 
-func (sf *sharedFile) getChunk(chunkHash [32]byte) []byte {
-	if !sf.chunkExists(chunkHash) {
+func (sf *sharedFile) getChunk(hashValue [32]byte) []byte {
+	if !sf.chunkBelongsToFile(hashValue) {
 		return nil
 	}
 
-	chunkFileName := hex.EncodeToString(chunkHash[:])
-	chunkPath := filepath.Join(SharedFilesChunksPath, sf.Name, chunkFileName)
+	chunkPath := filepath.Join(SharedFilesChunksPath, sf.Name, GetChunkFileName(hashValue))
 	if _, err := os.Stat(chunkPath); os.IsNotExist(err) {
 		log.Error("existing chunk cannot be found!!!")
 		return nil

@@ -53,8 +53,10 @@ var (
 )
 
 const (
-	RumorTimeout       = time.Second
-	AntiEntropyTimeout = time.Second
+	RumorTimeout              = time.Second
+	AntiEntropyTimeout        = time.Second
+	FileDownloadReplyTimeout  = 5 * time.Second
+	FileDownloadTimeoutsLimit = 5
 
 	PrivateMessageHopLimit = 5
 )
@@ -76,8 +78,9 @@ type Gossiper struct {
 	nextHop    map[string]*UDPAddr // accessed from message-processor and from webserver (for keys)
 	nextHopMux sync.Mutex
 
-	messageStorage     *MessageStorage     // accessed eg from message-processor and from rumor-mongering, is hard-synchronized
-	sharedFilesManager *SharedFilesManager // accessed only from gossiper
+	messageStorage          *MessageStorage          // accessed eg from message-processor and from rumor-mongering, is hard-synchronized
+	sharedFilesManager      *SharedFilesManager      // accessed only from message-processor
+	downloadingFilesManager *DownloadingFilesManager // accessed eg from message-processor and from file-downloading, is soft-synchronized
 
 	isSimpleMode bool       // in simple mode sending only simple messages
 	l            *log.Entry // logger
@@ -88,6 +91,8 @@ func NewGossiper(name string, uiport int, peersAddress string, peers string, isS
 
 	g := &Gossiper{}
 	g.messageStorage = &MessageStorage{VectorClock: make(map[string]uint32), RumorMessages: make(map[string][]*RumorMessage)}
+	g.sharedFilesManager = InitSharedFilesManager()
+	g.downloadingFilesManager = InitDownloadingFilesManager()
 	g.nextHop = make(map[string]*UDPAddr)
 	g.l = logger
 	g.isSimpleMode = isSimpleMode
@@ -243,9 +248,20 @@ func (g *Gossiper) GetPrivateMessages() *[]PrivateMessage {
 func (g *Gossiper) updateNextHop(origin string, relay *UDPAddr) {
 	g.nextHopMux.Lock()
 	addr, ok := g.nextHop[origin]
-	if ok && addr.String() != relay.String() {
+	if !ok || ok && addr.String() != relay.String() {
 		fmt.Println("DSDV " + origin + " " + relay.String())
 		g.nextHop[origin] = relay
+	}
+	g.nextHopMux.Unlock()
+}
+
+func (g *Gossiper) sendPacketWithNextHop(origin string, gp *GossipPacket) {
+	g.nextHopMux.Lock()
+	if g.nextHop[origin] != nil {
+		agp := &AddressedGossipPacket{Address: g.nextHop[origin], Packet: gp}
+		peerMessagesToSend <- agp
+	} else {
+		log.Warn("unable to send packet, because unknown origin")
 	}
 	g.nextHopMux.Unlock()
 }
@@ -424,7 +440,7 @@ func (g *Gossiper) processAddressedGossipPacket(agp *AddressedGossipPacket) {
 		g.processAddressedDataRequest(gp.DataRequest, address)
 	} else if gp.DataReply != nil {
 		g.l.Info("got data reply message")
-
+		g.processAddressedDataReply(gp.DataReply, address)
 	}
 }
 
@@ -477,7 +493,7 @@ func (g *Gossiper) processAddressedRumorMessage(rmsg *RumorMessage, address *UDP
 
 	if g.messageStorage.IsNewMessage(rmsg) {
 		// update next hop data
-
+		g.updateNextHop(rmsg.OriginalName, address)
 	}
 
 	g.processRumorMessage(rmsg)
@@ -503,73 +519,94 @@ func (g *Gossiper) processRumorMessage(rmsg *RumorMessage) {
 
 func (g *Gossiper) processAddressedPrivateMessage(pmsg *PrivateMessage, address *UDPAddr) {
 	//  commented in order to have all announcements from rumor message and to pass tests, may uncomment, really not that important
-	g.updateNextHop(pmsg.Origin, address)
+	//g.updateNextHop(pmsg.Origin, address)
 	g.processPrivateMessage(pmsg)
 }
 
 // in functions below copy-paste is present, but moving it to abstract functions is too resource-taking
 func (g *Gossiper) processPrivateMessage(pmsg *PrivateMessage) {
-	g.nextHopMux.Lock()
-	defer g.nextHopMux.Unlock()
-
 	gossiperName := g.name.Load().(string)
 
 	if pmsg.Destination == gossiperName {
 		g.messageStorage.AddPrivateMessage(pmsg, gossiperName)
-	} else if g.nextHop[pmsg.Destination] != nil {
-		if pmsg.HopLimit <= 0 {
-			log.Warn("hop limit for forwarding exceeded, drop the msg..")
-		} else {
-			pmsg.HopLimit = pmsg.HopLimit - 1
-			agp := &AddressedGossipPacket{Address: g.nextHop[pmsg.Destination], Packet: &GossipPacket{Private: pmsg}}
-			peerMessagesToSend <- agp
-		}
-	} else {
-		log.Warn("don't know such destination, drop the message..")
+		return
 	}
+	if pmsg.HopLimit <= 0 {
+		log.Warn("hop limit for forwarding exceeded, drop the msg..")
+		return
+	}
+
+	pmsg.HopLimit = pmsg.HopLimit - 1
+	g.sendPacketWithNextHop(pmsg.Destination, &GossipPacket{Private: pmsg})
 }
 
 func (g *Gossiper) processAddressedDataRequest(drqmsg *DataRequest, address *UDPAddr) {
-	g.updateNextHop(drqmsg.Origin, address)
+	//g.updateNextHop(drqmsg.Origin, address)
 	g.processDataRequest(drqmsg)
 }
 
 func (g *Gossiper) processDataRequest(drqmsg *DataRequest) {
-	g.nextHopMux.Lock()
-	defer g.nextHopMux.Unlock()
-
 	gossiperName := g.name.Load().(string)
 
 	if drqmsg.Destination == gossiperName {
-		requestedData := g.sharedFilesManager.GetChunk(drqmsg.HashValue)
+		requestedData := g.sharedFilesManager.GetChunkOrMetafile(drqmsg.HashValue)
 		if requestedData == nil {
 			log.Error("requested unexisting chunk")
 			return
 		}
 
 		drpmsg := &DataReply{HashValue: drqmsg.HashValue, Origin: gossiperName, Destination: drqmsg.Origin, HopLimit: PrivateMessageHopLimit, Data: requestedData}
-		agp := &AddressedGossipPacket{Address: g.nextHop[drpmsg.Destination], Packet: &GossipPacket{DataReply: drpmsg}}
-		peerMessagesToSend <- agp
-	} else if g.nextHop[drqmsg.Destination] != nil {
-		if drqmsg.HopLimit <= 0 {
-			log.Warn("hop limit for forwarding exceeded, drop the msg..")
-		} else {
-			drqmsg.HopLimit = drqmsg.HopLimit - 1
-			agp := &AddressedGossipPacket{Address: g.nextHop[drqmsg.Destination], Packet: &GossipPacket{DataRequest: drqmsg}}
-			peerMessagesToSend <- agp
-		}
-	} else {
-		log.Warn("don't know such destination, drop the message..")
+		g.sendPacketWithNextHop(drpmsg.Destination, &GossipPacket{DataReply: drpmsg})
+		return
 	}
+
+	if drqmsg.HopLimit <= 0 {
+		log.Warn("hop limit for forwarding exceeded, drop the msg..")
+		return
+	}
+
+	drqmsg.HopLimit = drqmsg.HopLimit - 1
+	g.sendPacketWithNextHop(drqmsg.Destination, &GossipPacket{DataRequest: drqmsg})
 }
 
 func (g *Gossiper) processClientDataRequest(cdrqmsg *ClientToDownloadMessage) {
-	// todo: goroutine-management + testing
+	origin := cdrqmsg.Destination
+	downloadingFilesChannelsMux.Lock() // if locking later, rc is introduced
+	if !g.downloadingFilesManager.StartDownloadingFromOrigin(origin, cdrqmsg.Name, cdrqmsg.HashValue) {
+		log.Error("cannot start downloading, because downloading from this peer is already in progress")
+		downloadingFilesChannelsMux.Unlock()
+		return
+	}
+
+	if _, ok := downloadingFilesChannels[origin]; ok {
+		log.Error("whaaat, map is not clean!") // we trust dfm more
+	}
+	downloadingFilesChannels[origin] = make(chan *DataReply)
+	downloadingFilesChannelsMux.Unlock()
+
+	// send first data request and start file-downloading goroutine
+	drqmsg := &DataRequest{Destination:origin, HopLimit:PrivateMessageHopLimit, HashValue:cdrqmsg.HashValue[:], Origin:g.name.Load().(string)}
+	gp := &GossipPacket{DataRequest:drqmsg}
+	g.sendPacketWithNextHop(origin, gp)
+
+	go g.startFileDownloadingGoroutine(origin, cdrqmsg.HashValue[:])
 }
 
 func (g *Gossiper) processAddressedDataReply(drpmsg *DataReply, address *UDPAddr) {
-	g.updateNextHop(drpmsg.Origin, address)
+	//g.updateNextHop(drpmsg.Origin, address)
+	g.processDataReply(drpmsg)
+}
 
+func (g *Gossiper) processDataReply(drpmsg *DataReply) {
+	downloadingFilesChannelsMux.Lock()
+	defer downloadingFilesChannelsMux.Unlock()
+
+	ch, ok := downloadingFilesChannels[drpmsg.Origin]
+	if !ok {
+		log.Warn("we are downloading nothing from this host!")
+	}
+
+	ch <- drpmsg
 }
 
 // -------------------------------------------
@@ -652,3 +689,51 @@ func (g *Gossiper) flipRumorMongeringCoin(messageBeingRumored *RumorMessage) {
 // --------------------------------------
 // end of rumor-mongering thread section
 // --------------------------------------
+
+// called only by file-downloading goroutines:
+func (g *Gossiper) startFileDownloadingGoroutine(origin string, latestRequestedHash []byte) {
+	downloadingFilesChannelsMux.Lock()
+	ch := downloadingFilesChannels[origin]
+	downloadingFilesChannelsMux.Unlock()
+
+	ticker := time.NewTicker(FileDownloadReplyTimeout)
+	timeoutsLimit := FileDownloadTimeoutsLimit
+
+	for true {
+		select {
+		case <-ticker.C:
+			g.l.Debug("timeout in file-downloading shot")
+			timeoutsLimit = timeoutsLimit - 1
+			if timeoutsLimit <= 0 {
+				g.l.Error("timeout completely exceeded for receiving the file")
+				return
+			}
+
+			// resend message we didn't receive reply for
+			dataRequest := &DataRequest{Destination: origin, HopLimit: PrivateMessageHopLimit, HashValue: latestRequestedHash, Origin: g.name.Load().(string)}
+			gp := &GossipPacket{DataRequest: dataRequest}
+			g.sendPacketWithNextHop(origin, gp)
+		case dataReplyPacket := <-ch:
+			g.l.Debug("got chunk from " + dataReplyPacket.Origin)
+			downloadingFilesChannelsMux.Lock() // locking to do removing from map & dfm synchronicaly
+			isFinished := g.downloadingFilesManager.ProcessDataReply(origin, dataReplyPacket)
+			if isFinished {
+				g.l.Info("Great, downloading is finished from " + origin)
+				delete(downloadingFilesChannels, origin)
+				downloadingFilesChannelsMux.Unlock()
+				return
+			}
+			downloadingFilesChannelsMux.Unlock()
+
+			// if not finished, send new message and continue waiting..
+			ticker = time.NewTicker(FileDownloadReplyTimeout) // upd ticker not to shoot to early
+			timeoutsLimit = FileDownloadTimeoutsLimit
+
+			dataRequestHash := g.downloadingFilesManager.GetDataRequestHash(origin)
+			latestRequestedHash = dataRequestHash
+			dataRequest := &DataRequest{Destination: origin, HopLimit: PrivateMessageHopLimit, HashValue: dataRequestHash, Origin: g.name.Load().(string)}
+			gp := &GossipPacket{DataRequest: dataRequest}
+			g.sendPacketWithNextHop(origin, gp)
+		}
+	}
+}

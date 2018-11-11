@@ -1,9 +1,12 @@
 package utils
 
 import (
+	"encoding/hex"
+	"github.com/SubutaiBogatur/Peerster/models"
 	log "github.com/sirupsen/logrus"
 )
 
+// returns (err != nil)
 func CheckErr(err error) bool {
 	return CheckError(err, nil)
 }
@@ -20,16 +23,19 @@ func CheckError(err error, logger *log.Entry) bool {
 	return false
 }
 
-func GetTypeStrictHash(hashValue []byte) *[32]byte {
+func GetTypeStrictHash(hashValue []byte) ([32]byte, error) {
+	var typedHashValue [32]byte
 	if len(hashValue) != 32 {
-		log.Error("invalid hash value passed")
-		return nil
+		return typedHashValue, models.PeersterError{ErrorMsg:"invalid hash value passed, len is strange"}
 	}
 
-	var typedHashValue [32]byte
 	for i, b := range hashValue {
 		typedHashValue[i] = b
 	}
 
-	return &typedHashValue
+	return typedHashValue, nil
+}
+
+func GetChunkFileName(hashValue [32]byte) string {
+	return hex.EncodeToString(hashValue[:]) + ".chunk"
 }
