@@ -68,7 +68,7 @@ func SendToDownloadMessageToLocalPort(name string, hashString string, destinatio
 		return
 	}
 
-	tsmsg := &ClientToDownloadMessage{Name:name, Destination:destination, HashValue:typedHashValue}
+	tsmsg := &ClientToDownloadMessage{Name: name, Destination: destination, HashValue: typedHashValue}
 	csmsg := &ClientMessage{ToDownload: tsmsg}
 	sendMessageToLocalPort(csmsg, port, logger)
 }

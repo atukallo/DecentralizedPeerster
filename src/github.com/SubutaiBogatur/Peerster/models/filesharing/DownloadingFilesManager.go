@@ -69,3 +69,10 @@ func (dfm *DownloadingFilesManager) GetDataRequestHash(origin string) []byte {
 
 	return dfm.downloadingFiles[origin].getDataRequest()
 }
+
+func (dfm *DownloadingFilesManager) DropDownloading(origin string) {
+	dfm.m.Lock()
+	defer dfm.m.Unlock()
+
+	delete(dfm.downloadingFiles, origin)
+}

@@ -65,7 +65,7 @@ func shareFile(path string) *sharedFile {
 	var curChunk = make([]byte, 0, FileChunkSize)
 	for i := 0; i < len(fileBytes); i++ {
 		curChunk = append(curChunk, fileBytes[i])
-		if (i+1)%FileChunkSize == 0 {
+		if (i+1)%FileChunkSize == 0 || (i+1) == len(fileBytes) {
 			chunks = append(chunks, curChunk)
 			curChunk = make([]byte, 0, FileChunkSize)
 		}
@@ -82,7 +82,7 @@ func shareFile(path string) *sharedFile {
 	}
 
 	sharedFile.MetaHash = sha256.Sum256(sharedFile.MetaSlice)
-	ioutil.WriteFile(filepath.Join(chunksPath, hex.EncodeToString(sharedFile.MetaHash[:])) + ".metafile", sharedFile.MetaSlice, FileCommonMode)
+	ioutil.WriteFile(filepath.Join(chunksPath, hex.EncodeToString(sharedFile.MetaHash[:]))+".metafile", sharedFile.MetaSlice, FileCommonMode)
 
 	return &sharedFile
 }

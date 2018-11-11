@@ -54,7 +54,7 @@ func (df *DownloadingFile) ProcessDataReply(drpmsg *DataReply) bool {
 
 	// we got the chunk we were waiting for:
 	delete(df.ChunksToDownload, typedHashValue)
-	fmt.Println("DOWNLOADING " + df.Name + " chunk " + strconv.Itoa(len(df.MetaSliceByChunks) - len(df.ChunksToDownload)) + " from " + drpmsg.Origin)
+	fmt.Println("DOWNLOADING " + df.Name + " chunk " + strconv.Itoa(len(df.MetaSliceByChunks)-len(df.ChunksToDownload)) + " from " + drpmsg.Origin)
 	chunkFileName := GetChunkFileName(typedHashValue)
 	ioutil.WriteFile(filepath.Join(DownloadsChunksPath, df.Name, chunkFileName), data, FileCommonMode)
 
@@ -118,12 +118,12 @@ func (df *DownloadingFile) finishDownloading() {
 		fileBytes = append(fileBytes, chunkBytes...)
 	}
 
-	log.Info("file composed and beingh written to persistent memory")
-	if _, err := os.Stat(filepath.Join(DownloadsChunksPath, df.Name)); !os.IsNotExist(err) {
-		log.Warn("such file alreaqy exists, deleting old file, sorry..")
-		os.Remove(filepath.Join(DownloadsChunksPath, df.Name))
+	log.Info("file composed and being written to persistent memory")
+	if _, err := os.Stat(filepath.Join(DownloadsPath, df.Name)); !os.IsNotExist(err) {
+		log.Warn("such file alreaqy exists in downloads dir, deleting old file, sorry..")
+		os.Remove(filepath.Join(DownloadsPath, df.Name))
 	}
-	ioutil.WriteFile(filepath.Join(DownloadsChunksPath, df.Name), fileBytes, FileCommonMode)
+	ioutil.WriteFile(filepath.Join(DownloadsPath, df.Name), fileBytes, FileCommonMode)
 
 	log.Debug("cleaning the temporary storage..")
 	os.RemoveAll(filepath.Join(DownloadsChunksPath, df.Name))

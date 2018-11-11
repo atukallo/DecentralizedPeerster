@@ -261,7 +261,7 @@ func (g *Gossiper) sendPacketWithNextHop(origin string, gp *GossipPacket) {
 		agp := &AddressedGossipPacket{Address: g.nextHop[origin], Packet: gp}
 		peerMessagesToSend <- agp
 	} else {
-		log.Warn("unable to send packet, because unknown origin")
+		log.Warn("unable to send packet, because unknown origin in nextHop function")
 	}
 	g.nextHopMux.Unlock()
 }
@@ -585,8 +585,8 @@ func (g *Gossiper) processClientDataRequest(cdrqmsg *ClientToDownloadMessage) {
 	downloadingFilesChannelsMux.Unlock()
 
 	// send first data request and start file-downloading goroutine
-	drqmsg := &DataRequest{Destination:origin, HopLimit:PrivateMessageHopLimit, HashValue:cdrqmsg.HashValue[:], Origin:g.name.Load().(string)}
-	gp := &GossipPacket{DataRequest:drqmsg}
+	drqmsg := &DataRequest{Destination: origin, HopLimit: PrivateMessageHopLimit, HashValue: cdrqmsg.HashValue[:], Origin: g.name.Load().(string)}
+	gp := &GossipPacket{DataRequest: drqmsg}
 	g.sendPacketWithNextHop(origin, gp)
 
 	go g.startFileDownloadingGoroutine(origin, cdrqmsg.HashValue[:])
@@ -706,6 +706,11 @@ func (g *Gossiper) startFileDownloadingGoroutine(origin string, latestRequestedH
 			timeoutsLimit = timeoutsLimit - 1
 			if timeoutsLimit <= 0 {
 				g.l.Error("timeout completely exceeded for receiving the file")
+
+				downloadingFilesChannelsMux.Lock()
+				delete(downloadingFilesChannels, origin)
+				g.downloadingFilesManager.DropDownloading(origin)
+				downloadingFilesChannelsMux.Unlock()
 				return
 			}
 
@@ -714,7 +719,7 @@ func (g *Gossiper) startFileDownloadingGoroutine(origin string, latestRequestedH
 			gp := &GossipPacket{DataRequest: dataRequest}
 			g.sendPacketWithNextHop(origin, gp)
 		case dataReplyPacket := <-ch:
-			g.l.Debug("got chunk from " + dataReplyPacket.Origin)
+			g.l.Debug("got chunk/metafile from " + dataReplyPacket.Origin)
 			downloadingFilesChannelsMux.Lock() // locking to do removing from map & dfm synchronicaly
 			isFinished := g.downloadingFilesManager.ProcessDataReply(origin, dataReplyPacket)
 			if isFinished {
