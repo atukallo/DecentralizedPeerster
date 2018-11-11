@@ -10,6 +10,8 @@ import (
 	"io/ioutil"
 	. "net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -26,7 +28,7 @@ var (
 )
 
 func getGossiperName(w http.ResponseWriter, r *http.Request) {
-	logger.Debug("get gossiper name")
+	//logger.Debug("get gossiper name")
 	writeJsonResponse(w, g.GetName())
 }
 
@@ -55,23 +57,24 @@ func addPeer(w http.ResponseWriter, r *http.Request) {
 }
 
 func getGossiperID(w http.ResponseWriter, r *http.Request) {
-	logger.Debug("get id")
+	//logger.Debug("get id")
 	writeJsonResponse(w, g.GetID(g.GetName()))
 }
 
 func getPeers(w http.ResponseWriter, r *http.Request) {
-	logger.Debug("get peers")
+	//logger.Debug("get peers")
 	peers := g.GetPeersCopy()
 	writeJsonResponse(w, peers)
 }
 
 func getOrigins(w http.ResponseWriter, r *http.Request) {
-	logger.Debug("get origins")
+	//logger.Debug("get origins")
 	origins := g.GetOriginsCopy()
 	writeJsonResponse(w, origins)
 }
 
 func sendRumorMessage(w http.ResponseWriter, r *http.Request) {
+	logger.Debug("post: send rumor message")
 	body, err := ioutil.ReadAll(r.Body)
 	CheckError(err, logger)
 	msg := string(body)
@@ -81,6 +84,7 @@ func sendRumorMessage(w http.ResponseWriter, r *http.Request) {
 }
 
 func sendPrivateMessage(w http.ResponseWriter, r *http.Request) {
+	logger.Debug("post: send private message")
 	body, err := ioutil.ReadAll(r.Body)
 	CheckError(err, logger)
 
@@ -92,12 +96,42 @@ func sendPrivateMessage(w http.ResponseWriter, r *http.Request) {
 }
 
 func getMessages(w http.ResponseWriter, r *http.Request) {
-	logger.Debug("get messages")
+	//logger.Debug("get messages")
 	rmsgs := g.GetRumorMessages()
 	pmsgs := g.GetPrivateMessages()
 
 	msgs := map[string]interface{}{"rumor-messages" : rmsgs, "private-messages" : pmsgs}
 	writeJsonResponse(w, msgs)
+}
+
+func shareFile(w http.ResponseWriter, r *http.Request) {
+	logger.Debug("post: share file")
+	body, err := ioutil.ReadAll(r.Body)
+	CheckError(err, logger)
+
+	path := string(body)
+	SendToShareMessageToLocalPort(path, g.GetClientAddress().Port, logger)
+}
+
+func requestFile(w http.ResponseWriter, r *http.Request) {
+	logger.Debug("post: request file")
+	body, err := ioutil.ReadAll(r.Body)
+	CheckError(err, logger)
+
+	s := strings.Split(string(body), "|") // terrible, sorry
+	dest := s[0]
+	hash := s[1]
+
+	// get name
+	filenumber := 0
+	for i := 1; ; i++ {
+		if _, err := os.Stat(filepath.Join(DownloadsPath, dest + "-" + strconv.Itoa(i))); os.IsNotExist(err) {
+			filenumber = i
+			break
+		}
+	}
+
+	SendToDownloadMessageToLocalPort(dest + "-" + strconv.Itoa(filenumber), hash, dest, g.GetClientAddress().Port, logger)
 }
 
 func writeJsonResponse(w http.ResponseWriter, data interface{}) {
@@ -127,6 +161,8 @@ func StartWebserver(gossiper *Gossiper) {
 	r.Methods("POST").Subrouter().HandleFunc("/sendRumorMessage", sendRumorMessage)
 	r.Methods("POST").Subrouter().HandleFunc("/sendPrivateMessage", sendPrivateMessage)
 	r.Methods("GET").Subrouter().HandleFunc("/getMessages", getMessages)
+	r.Methods("POST").Subrouter().HandleFunc("/shareFile", shareFile)
+	r.Methods("POST").Subrouter().HandleFunc("/requestFile", requestFile)
 
 	r.Handle("/", http.FileServer(http.Dir("./webserver/static"))) // relative path for main.go
 

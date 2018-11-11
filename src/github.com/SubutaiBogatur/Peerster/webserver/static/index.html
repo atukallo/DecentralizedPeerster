@@ -20,41 +20,40 @@ DISCLAIMER: I don't like frontend and thus it's bad and ugly. Please have a look
         </button>
     </div>
 
-    <div>
-        <div style="float: left">
-            <h3>known peers</h3>
-            <ul id="peers-list"></ul>
+    <div style="float: left">
+        <h3>known peers</h3>
+        <ul id="peers-list"></ul>
 
-            <input type="text" id="peer-input" placeholder="New peer ip:port ..."/>
-            <button id="add-peer-button">Add peer</button>
+        <input type="text" id="peer-input" placeholder="New peer ip:port ..."/>
+        <button id="add-peer-button">Add peer</button>
 
-            <h3>rumor messages</h3>
+        <h3>rumor messages</h3>
 
-            <input type="text" id="rumor-message-input" placeholder="New message to gossip..."/>
-            <button id="send-rumor-message-button">Send rumor message</button>
+        <input type="text" id="rumor-message-input" placeholder="New message to gossip..."/>
+        <button id="send-rumor-message-button">Send rumor message</button>
 
-            <ul id="rumor-messages-list"></ul>
-        </div>
+        <ul id="rumor-messages-list"></ul>
+    </div>
 
-        <div style="float: left; margin-left: 20px">
-            <h3>known origins</h3>
+    <div style="float: left; margin-left: 20px">
+        <h3>known origins</h3>
+        <ul id="origins-list"></ul>
 
-            <ul id="origins-list">
-                <li>
-                    <input type="radio" name="origin" value="looser"/> looser <br>
-                </li>
-                <li>
-                    <input type="radio" name="origin" value="asdf"> asdf <br>
-                </li>
-            </ul>
+        <h3>requested files</h3>
+        <input type="text" id="request-hash-input" placeholder="Hash to request..."/>
+        <button id="request-file-button">Request file</button>
 
-            <h3>private messages</h3>
+        <h3>private messages</h3>
+        <input type="text" id="private-message-input" placeholder="New private message..."/>
+        <button id="send-private-message-button">Send private message</button>
 
-            <input type="text" id="private-message-input" placeholder="New private message..."/>
-            <button id="send-private-message-button">Send private message</button>
+        <ul id="private-messages-list"></ul>
+    </div>
 
-            <ul id="private-messages-list"></ul>
-        </div>
+    <div style="float: left; margin-left: 20px">
+        <h3>shared files</h3>
+        <input type="text" id="shared-file-input" placeholder="File to share.."/>
+        <button id="share-file-button">Share file</button>
     </div>
 
 </div>
@@ -68,6 +67,8 @@ DISCLAIMER: I don't like frontend and thus it's bad and ugly. Please have a look
     document.getElementById("add-peer-button").onclick = addNewPeerOnClick;
     document.getElementById("send-rumor-message-button").onclick = sendRumorMessageOnClick;
     document.getElementById("send-private-message-button").onclick = sendPrivateMessageOnClick;
+    document.getElementById("request-file-button").onclick = callRequestFile;
+    document.getElementById("share-file-button").onclick = callShareFile;
 
     updateAllFields();
     var timer = setInterval(updateAllFields, 1000 * 10); // update everything once in timeout
@@ -194,7 +195,7 @@ DISCLAIMER: I don't like frontend and thus it's bad and ugly. Please have a look
             var i;
             var radioHtmlTemplate = '<input type="radio" name="origins" ';
             for (i = 0; i < origins.length; i++) {
-                var radioHtml = radioHtmlTemplate + 'value="' + origins[i] +'"/>' + " " + origins[i];
+                var radioHtml = radioHtmlTemplate + 'value="' + origins[i] + '"/>' + " " + origins[i];
                 var li = document.createElement('li');
                 li.innerHTML = radioHtml;
                 list.appendChild(li);
@@ -233,6 +234,25 @@ DISCLAIMER: I don't like frontend and thus it's bad and ugly. Please have a look
         }
 
         jqueryAjaxGet("/getGossiperID", gotID);
+    }
+
+    function callRequestFile() {
+        if (document.querySelector('input[name="origins"]:checked') == null) {
+            console.log("nothing is chosen!");
+            return; // nothing is chosen
+        }
+
+        var chosen_value = document.querySelector('input[name="origins"]:checked').value;
+        var requested_hash = document.getElementById("request-hash-input").value;
+        jqueryAjaxPost("/requestFile", chosen_value + "|" + requested_hash);
+        document.getElementById("request-hash-input").value = "";
+        document.querySelector('input[name="origins"]:checked').checked = false;
+    }
+
+    function callShareFile() {
+        var filename = document.getElementById("shared-file-input").value;
+        jqueryAjaxPost("/shareFile", filename);
+        document.getElementById("shared-file-input").value = "";
     }
 
 
