@@ -5,7 +5,7 @@ import "path/filepath"
 const (
 	LocalIp = "127.0.0.1" // ip addr of gossiper through loopback interface
 
-	MaxPacketSize = 2048 // in bytes
+	MaxPacketSize = 16 * 1024 // in bytes
 
 	FileChunkSize = 8 * 1024 // in bytes
 	//FileChunkSize = 64 // in bytes

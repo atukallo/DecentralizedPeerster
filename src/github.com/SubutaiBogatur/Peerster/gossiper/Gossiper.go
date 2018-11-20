@@ -1,6 +1,7 @@
 package gossiper
 
 import (
+	"encoding/hex"
 	"fmt"
 	. "github.com/SubutaiBogatur/Peerster/models"
 	. "github.com/SubutaiBogatur/Peerster/models/filesharing"
@@ -298,7 +299,7 @@ func (g *Gossiper) StartPeerReader() {
 		gp := &GossipPacket{}
 		if err := protobuf.Decode(buffer, gp); err != nil {
 			// todo(atukallo): fix some protobuf warnings
-			//g.l.Warn("unable to decode message, error: " + err.Error())
+			g.l.Warn("unable to decode message, error: " + err.Error())
 		}
 
 		apg := &AddressedGossipPacket{Address: addr, Packet: gp}
@@ -735,6 +736,7 @@ func (g *Gossiper) startFileDownloadingGoroutine(origin string, latestRequestedH
 			timeoutsLimit = FileDownloadTimeoutsLimit
 
 			dataRequestHash := g.downloadingFilesManager.GetDataRequestHash(origin)
+			g.l.Debug("now requesting " + hex.EncodeToString(dataRequestHash))
 			latestRequestedHash = dataRequestHash
 			dataRequest := &DataRequest{Destination: origin, HopLimit: PrivateMessageHopLimit, HashValue: dataRequestHash, Origin: g.name.Load().(string)}
 			gp := &GossipPacket{DataRequest: dataRequest}
