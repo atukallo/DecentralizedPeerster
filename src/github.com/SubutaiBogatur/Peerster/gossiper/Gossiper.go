@@ -248,23 +248,23 @@ func (g *Gossiper) GetPrivateMessages() *[]PrivateMessage {
 
 func (g *Gossiper) updateNextHop(origin string, relay *UDPAddr) {
 	g.nextHopMux.Lock()
+	defer g.nextHopMux.Unlock()
 	addr, ok := g.nextHop[origin]
 	if !ok || ok && addr.String() != relay.String() {
 		fmt.Println("DSDV " + origin + " " + relay.String())
 		g.nextHop[origin] = relay
 	}
-	g.nextHopMux.Unlock()
 }
 
 func (g *Gossiper) sendPacketWithNextHop(origin string, gp *GossipPacket) {
 	g.nextHopMux.Lock()
+	defer g.nextHopMux.Unlock()
 	if g.nextHop[origin] != nil {
 		agp := &AddressedGossipPacket{Address: g.nextHop[origin], Packet: gp}
 		peerMessagesToSend <- agp
 	} else {
 		log.Warn("unable to send packet, because unknown origin in nextHop function")
 	}
-	g.nextHopMux.Unlock()
 }
 
 // client-reader thread
@@ -602,9 +602,12 @@ func (g *Gossiper) processDataReply(drpmsg *DataReply) {
 	downloadingFilesChannelsMux.Lock()
 	defer downloadingFilesChannelsMux.Unlock()
 
+	// todo: check destination and forward further!
+
 	ch, ok := downloadingFilesChannels[drpmsg.Origin]
 	if !ok {
 		log.Warn("we are downloading nothing from this host!")
+		return
 	}
 
 	ch <- drpmsg
