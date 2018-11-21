@@ -91,7 +91,7 @@ func NewGossiper(name string, uiport int, peersAddress string, peers string, isS
 	logger := log.WithField("bin", "gos")
 
 	g := &Gossiper{}
-	g.messageStorage = &MessageStorage{VectorClock: make(map[string]uint32), RumorMessages: make(map[string][]*RumorMessage)}
+	g.messageStorage = InitMessageStorage(name)
 	g.sharedFilesManager = InitSharedFilesManager()
 	g.downloadingFilesManager = InitDownloadingFilesManager()
 	g.nextHop = make(map[string]*UDPAddr)
@@ -278,7 +278,7 @@ func (g *Gossiper) StartClientReader() {
 		cmsg := &ClientMessage{}
 		if err := protobuf.Decode(buffer, cmsg); err != nil {
 			// todo(atukallo): fix some protobuf warnings
-			//g.l.Warn("unable to decode message, error: " + err.Error())
+			g.l.Warn("unable to decode message, error: " + err.Error())
 		}
 
 		// ~~~ put into channel ~~~
@@ -599,18 +599,28 @@ func (g *Gossiper) processAddressedDataReply(drpmsg *DataReply, address *UDPAddr
 }
 
 func (g *Gossiper) processDataReply(drpmsg *DataReply) {
-	downloadingFilesChannelsMux.Lock()
-	defer downloadingFilesChannelsMux.Unlock()
+	gossiperName := g.name.Load().(string)
 
-	// todo: check destination and forward further!
+	if drpmsg.Destination != gossiperName {
+		if drpmsg.HopLimit <= 0 {
+			log.Warn("hop limit for forwarding exceeded, drop the drpmsg..")
+			return
+		}
 
-	ch, ok := downloadingFilesChannels[drpmsg.Origin]
-	if !ok {
-		log.Warn("we are downloading nothing from this host!")
+		drpmsg.HopLimit = drpmsg.HopLimit - 1
+		g.sendPacketWithNextHop(drpmsg.Destination, &GossipPacket{DataReply: drpmsg})
 		return
 	}
 
-	ch <- drpmsg
+	// else msg addressed to this gossiper:
+	downloadingFilesChannelsMux.Lock()
+	defer downloadingFilesChannelsMux.Unlock()
+
+	if ch, ok := downloadingFilesChannels[drpmsg.Origin]; ok {
+		ch <- drpmsg
+	} else {
+		log.Warn("we are downloading nothing from this host! (the host is not present in the map)")
+	}
 }
 
 // -------------------------------------------
@@ -697,7 +707,11 @@ func (g *Gossiper) flipRumorMongeringCoin(messageBeingRumored *RumorMessage) {
 // called only by file-downloading goroutines:
 func (g *Gossiper) startFileDownloadingGoroutine(origin string, latestRequestedHash []byte) {
 	downloadingFilesChannelsMux.Lock()
-	ch := downloadingFilesChannels[origin]
+	ch, ok := downloadingFilesChannels[origin]
+	if !ok {
+		log.Error("some terrible race condition occured, channel is not in the map! Downloading goroutine dies..")
+		return
+	}
 	downloadingFilesChannelsMux.Unlock()
 
 	ticker := time.NewTicker(FileDownloadReplyTimeout)

@@ -6,4 +6,7 @@ pkg
 src/github.com/SubutaiBogatur/Peerster/Peerster
 src/github.com/SubutaiBogatur/Peerster/client/client
 src/github.com/SubutaiBogatur/Peerster/webserver/webserver
+
 src/github.com/SubutaiBogatur/Peerster/_SharedFiles/1M_file.txt
+src/github.com/SubutaiBogatur/Peerster/_SharedFiles/chunks
+

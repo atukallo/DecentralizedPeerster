@@ -38,10 +38,10 @@ cd client
 go build
 cd ..
 
-./Peerster -name=a -peers="$bAddr"        -UIPort=$aUIPort -gossipAddr=$aAddr -rtimer=0 -noWebserver=false -noAntiEntropy=true > A.out &
-./Peerster -name=b -peers="$aAddr,$cAddr" -UIPort=$bUIPort -gossipAddr=$bAddr -rtimer=0 -noWebserver=true  -noAntiEntropy=true > B.out &
-./Peerster -name=c -peers="$bAddr,$dAddr" -UIPort=$cUIPort -gossipAddr=$cAddr -rtimer=0 -noWebserver=true  -noAntiEntropy=true > C.out &
-./Peerster -name=d -peers="$cAddr"        -UIPort=$dUIPort -gossipAddr=$dAddr -rtimer=0 -noWebserver=true  -noAntiEntropy=true > D.out &
+./Peerster -name=a -peers="$bAddr"        -UIPort=$aUIPort -gossipAddr=$aAddr -rtimer=0 -noWebserver=false -noAntiEntropy=true -rtimer=100 > A.out &
+./Peerster -name=b -peers="$aAddr,$cAddr" -UIPort=$bUIPort -gossipAddr=$bAddr -rtimer=0 -noWebserver=true  -noAntiEntropy=true -rtimer=100 > B.out &
+./Peerster -name=c -peers="$bAddr,$dAddr" -UIPort=$cUIPort -gossipAddr=$cAddr -rtimer=0 -noWebserver=true  -noAntiEntropy=true -rtimer=100 > C.out &
+./Peerster -name=d -peers="$cAddr"        -UIPort=$dUIPort -gossipAddr=$dAddr -rtimer=0 -noWebserver=true  -noAntiEntropy=true -rtimer=100 > D.out &
 
 # let the gossipers initialize
 sleep 1

@@ -17,6 +17,18 @@ type MessageStorage struct {
 	mux sync.Mutex
 }
 
+func InitMessageStorage(gossiperName string) *MessageStorage{
+	ms := MessageStorage{}
+	ms.VectorClock = make(map[string]uint32)
+	//ms.VectorClock[gossiperName] = 0 // protobuf doesn't like to deal with empty arrays, so let's never have empty vector clock
+
+	ms.RumorMessages = make(map[string][]*RumorMessage)
+	ms.NonEmptyMessagesChronOrder = make([]*RumorMessage, 0)
+	ms.PrivateMessages = make([]*PrivateMessage, 0)
+
+	return &ms
+}
+
 // numeration from 1
 func (ms *MessageStorage) GetNextMessageId(name string) uint32 {
 	ms.mux.Lock()
@@ -162,7 +174,7 @@ func (ms *MessageStorage) AddRumorMessage(rmsg *RumorMessage) bool {
 	}
 
 	// should add personal info to logger
-	log.Debug("Vector clock is:", ms.VectorClock)
+	log.Debug("Vector clock (to get status snapshot make +1) is:", ms.VectorClock)
 
 	return true // was new
 }
