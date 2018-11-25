@@ -1,6 +1,8 @@
 package filesharing
 
 import (
+	"encoding/hex"
+	"fmt"
 	. "github.com/SubutaiBogatur/Peerster/utils"
 	log "github.com/sirupsen/logrus"
 	"os"
@@ -48,6 +50,7 @@ func (sfm *SharedFilesManager) ShareFile(path string) {
 	}
 
 	sfm.sharedFiles[sf.MetaHash] = sf
+	fmt.Println("SHARED FILE " + sf.Name + " GOT METAHASH " + hex.EncodeToString(sf.MetaHash[:]))
 }
 
 func (sfm *SharedFilesManager) GetChunkOrMetafile(hashValue []byte) []byte {

@@ -76,6 +76,7 @@ func shareFile(path string) *sharedFile {
 	for _, chunk := range chunks {
 		chunkHash := sha256.Sum256(chunk)
 		sharedFile.MetaSlice = append(sharedFile.MetaSlice, chunkHash[:]...)
+		// it's an interesting case if file has a series of same chunks. Then we still do the sharing, but thanks to metafile downloading side will just request same chunk a few times
 		sharedFile.MetaSet[chunkHash] = true
 		ioutil.WriteFile(filepath.Join(chunksPath, GetChunkFileName(chunkHash)), chunk, FileCommonMode)
 		// now chunk won't be stored in ram
