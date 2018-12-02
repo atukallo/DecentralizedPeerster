@@ -3,19 +3,25 @@ package filesharing
 import (
 	"encoding/hex"
 	"fmt"
+	. "github.com/SubutaiBogatur/Peerster/models"
 	. "github.com/SubutaiBogatur/Peerster/utils"
 	log "github.com/sirupsen/logrus"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 // accessed only from message-processor thread
 type SharedFilesManager struct {
 	sharedFiles map[[32]byte]*sharedFile
+
+	mux sync.Mutex
+
+	l *log.Entry // logger
 }
 
-func InitSharedFilesManager() *SharedFilesManager {
-	sfm := &SharedFilesManager{sharedFiles: make(map[[32]byte]*sharedFile)}
+func InitSharedFilesManager(l *log.Entry) *SharedFilesManager {
+	sfm := &SharedFilesManager{sharedFiles: make(map[[32]byte]*sharedFile), l: l}
 
 	// when initting let's clear state and tmp files:
 	if _, err := os.Stat(SharedFilesChunksPath); !os.IsNotExist(err) {
@@ -31,21 +37,24 @@ func InitSharedFilesManager() *SharedFilesManager {
 
 // accepts path relative to _SharedFiles directory
 func (sfm *SharedFilesManager) ShareFile(path string) {
+	sfm.mux.Lock()
+	defer sfm.mux.Unlock()
+
 	path = filepath.Join(SharedFilesPath, path)
 	for _, v := range sfm.sharedFiles {
 		if v.Name == filepath.Base(path) {
-			log.Error("such file was already shared")
+			sfm.l.Error("such file was already shared")
 		}
 	}
 
 	sf := shareFile(path)
 	if sf == nil {
-		log.Error("unable to share file")
+		sfm.l.Error("unable to share file")
 		return
 	}
 
 	if _, ok := sfm.sharedFiles[sf.MetaHash]; ok {
-		log.Error("such hash is already present in map!!")
+		sfm.l.Error("such hash is already present in map!!")
 		return
 	}
 
@@ -54,6 +63,9 @@ func (sfm *SharedFilesManager) ShareFile(path string) {
 }
 
 func (sfm *SharedFilesManager) GetChunkOrMetafile(hashValue []byte) []byte {
+	sfm.mux.Lock()
+	defer sfm.mux.Unlock()
+
 	typedHashValue, err := GetTypeStrictHash(hashValue)
 	if CheckErr(err) {
 		return nil
@@ -70,6 +82,19 @@ func (sfm *SharedFilesManager) GetChunkOrMetafile(hashValue []byte) []byte {
 		}
 	}
 
-	log.Info("the chunk or metafile with requested hash not found in shared files")
+	sfm.l.Info("the chunk or metafile with requested hash not found in shared files")
 	return nil
+}
+
+func (sfm *SharedFilesManager) GetSearchResults(keywords []string) []*SearchResult {
+	sfm.mux.Lock()
+	defer sfm.mux.Unlock()
+
+	searchResults := make([]*SearchResult, 0)
+
+	for _, sf := range sfm.sharedFiles {
+		searchResults = append(searchResults, sf.getSearchResults(keywords)...)
+	}
+
+	return searchResults
 }

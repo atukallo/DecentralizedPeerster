@@ -3,11 +3,14 @@ package filesharing
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	. "github.com/SubutaiBogatur/Peerster/models"
 	. "github.com/SubutaiBogatur/Peerster/utils"
 	log "github.com/sirupsen/logrus"
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 )
 
 type sharedFile struct {
@@ -110,4 +113,24 @@ func (sf *sharedFile) getChunk(hashValue [32]byte) []byte {
 	}
 
 	return chunkBytes
+}
+
+func (sf *sharedFile) getSearchResults(keywords []string) []*SearchResult {
+	searchResults := make([]*SearchResult, 0)
+
+	for _, kw := range keywords {
+		if res, err := regexp.MatchString(".*"+kw+".*", sf.Name); err == nil && res {
+			log.Info("shared file " + sf.Name + " matches search request " + strings.Join(keywords, ","))
+			searchResult := &SearchResult{FileName: sf.Name, MetafileHash: sf.MetaHash[:], ChunkCount: uint64(len(sf.MetaSet))}
+			chunkMap := make([]uint64, len(sf.MetaSet))
+			for i := 1; i <= len(sf.MetaSet); i++ {
+				chunkMap[i-1] = uint64(i)
+			}
+			searchResult.ChunkMap = chunkMap
+
+			searchResults = append(searchResults, searchResult)
+		}
+	}
+
+	return searchResults
 }

@@ -2,6 +2,7 @@ package filesharing
 
 import (
 	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	. "github.com/SubutaiBogatur/Peerster/models"
 	. "github.com/SubutaiBogatur/Peerster/utils"
@@ -9,11 +10,13 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
+	"strings"
 )
 
-type DownloadingFile struct {
-	Name string
+type downloadingFile struct {
+	Name string // name is the name, which will be given to file after downloading finishes
 
 	MetaHash [32]byte
 	Metafile []byte
@@ -24,11 +27,11 @@ type DownloadingFile struct {
 	ChunksToDownload map[[32]byte]bool // chunk_hash -> bool, is like ChunkHashesSet, but is modified with every new downloaded chunk
 }
 
-func InitDownloadingFile(name string, metahash [32]byte) *DownloadingFile {
-	return &DownloadingFile{Name: name, MetaHash: metahash} // all others nil
+func initDownloadingFile(name string, metahash [32]byte) *downloadingFile {
+	return &downloadingFile{Name: name, MetaHash: metahash} // all others nil
 }
 
-func (df *DownloadingFile) fileHasDownloadedChunk(hashValue [32]byte) bool {
+func (df *downloadingFile) fileHasDownloadedChunk(hashValue [32]byte) bool {
 	if df.Metafile == nil {
 		return false // nothing is downloaded yet
 	}
@@ -39,7 +42,7 @@ func (df *DownloadingFile) fileHasDownloadedChunk(hashValue [32]byte) bool {
 	return df.MetaHash == hashValue || (isCorrectChunk && !isNotDownloaded)
 }
 
-func (df *DownloadingFile) getChunkOrMetafile(hashValue [32]byte) []byte {
+func (df *downloadingFile) getChunkOrMetafile(hashValue [32]byte) []byte {
 	if hashValue == df.MetaHash {
 		log.Info("returned metafile for downloading file")
 		return df.Metafile
@@ -66,7 +69,7 @@ func (df *DownloadingFile) getChunkOrMetafile(hashValue [32]byte) []byte {
 }
 
 //returns true if downloading is finished, nil if error
-func (df *DownloadingFile) ProcessDataReply(drpmsg *DataReply) *bool {
+func (df *downloadingFile) processDataReply(drpmsg *DataReply) *bool {
 	typedHashValue, err := GetTypeStrictHash(drpmsg.HashValue)
 	if CheckErr(err) {
 		return nil
@@ -75,20 +78,25 @@ func (df *DownloadingFile) ProcessDataReply(drpmsg *DataReply) *bool {
 	data := drpmsg.Data
 	if sha256.Sum256(data) != typedHashValue {
 		log.Error("got error hash-value pair!")
+		log.Debug("error details: hash is " + hex.EncodeToString(typedHashValue[:]) + " when data is: ", data)
 		return nil
 	}
 
 	// if we received metafile:
 	if df.Metafile == nil {
-		df.gotMetafile(typedHashValue, data)
-		fmt.Println("DOWNLOADING metafile of " + df.Name + " from " + drpmsg.Origin)
-		return new(bool) // ptr to false
+		ok := df.gotMetafile(typedHashValue, data)
+		if ok {
+			fmt.Println("DOWNLOADING metafile of " + df.Name + " from " + drpmsg.Origin)
+			return new(bool) // ptr to false
+		} else {
+			return nil // request will be repeated
+		}
 	}
 	// else this is not metahash:
 
 	if _, ok := df.ChunksToDownload[typedHashValue]; !ok {
 		log.Warn("got the chunk, which is not in metafile or was already downloaded")
-		return nil
+		return new(bool) // returning not error, because we don't want to repeat the request for unknown chunk
 	}
 
 	// we got the chunk we were waiting for:
@@ -106,10 +114,11 @@ func (df *DownloadingFile) ProcessDataReply(drpmsg *DataReply) *bool {
 	return new(bool)
 }
 
-func (df *DownloadingFile) gotMetafile(hashValue [32]byte, metafile []byte) {
+func (df *downloadingFile) gotMetafile(hashValue [32]byte, metafile []byte) bool {
 	if len(metafile)%32 != 0 || hashValue != df.MetaHash {
 		log.Error("we should have received metafile, but data seems not valid..")
-		return
+		log.Debug("error details: received hashData is: " + hex.EncodeToString(hashValue[:]) + " when expected: " + hex.EncodeToString(df.MetaHash[:]))
+		return false
 	}
 
 	df.Metafile = make([]byte, len(metafile)) // very strange bug if no copying is done
@@ -139,7 +148,7 @@ func (df *DownloadingFile) gotMetafile(hashValue [32]byte, metafile []byte) {
 	fileChunksPath := filepath.Join(DownloadsChunksPath, df.Name)
 	if _, err := os.Stat(fileChunksPath); !os.IsNotExist(err) {
 		log.Warn("received metafile for file, which downloading is currently in progress..")
-		return
+		return false
 	}
 
 	os.Mkdir(fileChunksPath, FileCommonMode)
@@ -147,9 +156,10 @@ func (df *DownloadingFile) gotMetafile(hashValue [32]byte, metafile []byte) {
 	// save metafile to disk:
 	metafileName := GetChunkFileName(df.MetaHash)
 	ioutil.WriteFile(filepath.Join(fileChunksPath, metafileName), metafile, FileCommonMode)
+	return true
 }
 
-func (df *DownloadingFile) finishDownloading() {
+func (df *downloadingFile) finishDownloading() {
 	log.Info("file " + df.Name + " is downloaded, composing it..")
 	fileBytes := make([]byte, 0, len(df.ChunksHashesSlice)*FileChunkSize)
 	for _, chunkHash := range df.ChunksHashesSlice {
@@ -179,7 +189,7 @@ func (df *DownloadingFile) finishDownloading() {
 	log.Debug("file composed & everything is ok, now providing chunks only for sharing")
 }
 
-func (df *DownloadingFile) getDataRequest() []byte {
+func (df *downloadingFile) getDataRequest() []byte {
 	for k := range df.ChunksToDownload {
 		return k[:]
 	}
@@ -187,3 +197,28 @@ func (df *DownloadingFile) getDataRequest() []byte {
 	// everything is downloaded already
 	return nil
 }
+
+func (df *downloadingFile) getSearchResults(keywords []string) []*SearchResult {
+	searchResults := make([]*SearchResult, 0)
+
+	for _, kw := range keywords {
+		if res, err := regexp.MatchString(".*"+kw+".*", df.Name); err == nil && res {
+			log.Info("download(ing|ed) file " + df.Name + " matches search request " + strings.Join(keywords, ","))
+			searchResult := &SearchResult{FileName: df.Name, MetafileHash: df.MetaHash[:], ChunkCount: uint64(len(df.ChunksHashesSlice))} // here is a possible bug, bc Slice & Set can have different sizes
+			downloadedChunksSlice := make([]uint64, 0)
+			// workds in O(n), can be optimized, but it is definitely not most important problem of the gossiper, hahahahah
+			for i := 0; i < len(df.ChunksHashesSlice); i++ {
+				_, isNotDownloaded := df.ChunksToDownload[df.ChunksHashesSlice[i]]
+				if !isNotDownloaded {
+					downloadedChunksSlice = append(downloadedChunksSlice, uint64(i + 1))
+				}
+			}
+			searchResult.ChunkMap = downloadedChunksSlice
+
+			searchResults = append(searchResults, searchResult)
+		}
+	}
+
+	return searchResults
+}
+

@@ -26,7 +26,7 @@ func CheckError(err error, logger *log.Entry) bool {
 func GetTypeStrictHash(hashValue []byte) ([32]byte, error) {
 	var typedHashValue [32]byte
 	if len(hashValue) != 32 {
-		return typedHashValue, models.PeersterError{ErrorMsg:"invalid hash value passed, len is strange"}
+		return typedHashValue, models.PeersterError{ErrorMsg: "invalid hash value passed, len is strange"}
 	}
 
 	for i, b := range hashValue {
@@ -42,4 +42,9 @@ func GetChunkFileName(hashValue [32]byte) string {
 
 func GetMetafileName(hashValue [32]byte) string {
 	return hex.EncodeToString(hashValue[:]) + ".metafile"
+}
+
+func GetRecentSearchRequestSetKey(origin string, keywords []string) string {
+	// todo
+	return "abc"
 }

@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	. "github.com/SubutaiBogatur/Peerster/models"
+	. "github.com/SubutaiBogatur/Peerster/models/filesearching"
 	. "github.com/SubutaiBogatur/Peerster/models/filesharing"
 	. "github.com/SubutaiBogatur/Peerster/utils"
 	"github.com/dedis/protobuf"
@@ -21,12 +22,12 @@ import (
 // Some documentation on what's happening
 //
 // We will have threads:
-// * client-reader        thread : the only port reading from client socket. Sends client message to message-processor
-// * peer-reader          thread : the only port reading from peer socket. Sends GossipPackets to message-processor
-// * peer-writer          thread : the only port writing to peer socket. Listens to channel for GossipPackets and writes them
-// * anti-entropy-timer   thread : goroutine sends a status to random peer every timeout seconds
-// * route-rumoring       thread : once in a timer sends empty rumor message to random peers, so everyone will know about this origin (accesses nothing)
-// * message-processor    thread : is an abstraction on client-listener, peer-listener threads. Receives all the messages and for every message:
+// * client-reader          thread : the only port reading from client socket. Sends client message to message-processor
+// * peer-reader            thread : the only port reading from peer socket. Sends GossipPackets to message-processor
+// * peer-writer            thread : the only port writing to peer socket. Listens to channel for GossipPackets and writes them
+// * anti-entropy-timer     thread : goroutine sends a status to random peer every timeout seconds
+// * route-rumoring         thread : once in a timer sends empty rumor message to random peers, so everyone will know about this origin (accesses nothing)
+// * message-processor      thread : is an abstraction on client-listener, peer-listener threads. Receives all the messages and for every message:
 //     + rumor-msg      : upd status, send status back, send rumor randomly further, start rumor-mongering thread waiting for status
 //     + status-msg     : push it to one of the rumor-mongering threads (if rumor mongering is not in progress, then compare statuses and start it)
 //     + private        : ezy - forward if needed, else display
@@ -34,15 +35,14 @@ import (
 //     + data-reply     : answer with next request (if needed) and start file-downloading thread to wait for next data-reply or timeout
 //     + search-request : answer with needed data & start search-reply-timeout thread not to answer this request once again
 //     + search-reply   : put message via channel (via struct) to the only search-request thread
-// * rumor-mongering      thread : thread waits either for status-msg to arrive or for timeout and stores rumor-msg, it was initiated for
+// * rumor-mongering        thread : thread waits either for status-msg to arrive or for timeout and stores rumor-msg, it was initiated for
 //     + status-msg : cmp (store sync-safe Map for VectorClock, which are edited from message-processor) and send new msg via peer-communicator
 //     + timeout    : 1/2 & send new rumor-msg via peer-communicator
-// * webserver            thread : listens to http-requests on a given port and reads / writes from gossiper object
-// * file-downloading     thread : thread waits either for DataReply msg from fixed origin or for timeout
-// * search-reply-timeout thread : we don't answer the same search-request for some time after we answered it
-// * search-request       thread : the only goroutine, which maintains current search-request: reads search-replies and repeats search-requests with more budget
+// * webserver              thread : listens to http-requests on a given port and reads / writes from gossiper object
+// * file-downloading       thread : thread waits either for DataReply msg from fixed origin or for timeout
+// * search-request-timeout thread : we don't answer the same search-request for some time after we answered it
+// * search-request         thread : the only goroutine, which maintains current search-request: reads search-replies and repeats search-requests with more budget
 
-// command line arguments
 var (
 	clientMessagesToProcess = make(chan *ClientMessage)
 	peerMessagesToProcess   = make(chan *AddressedGossipPacket)
@@ -60,8 +60,15 @@ var (
 const (
 	RumorTimeout              = time.Second
 	AntiEntropyTimeout        = time.Second
-	FileDownloadReplyTimeout  = 5 * time.Second
+	FileDownloadReplyTimeout  = 1 * time.Second
 	FileDownloadTimeoutsLimit = 5
+
+	DefaultStartingSearchBudget = 2
+	DefaultMaxSearchBudget      = 32
+	FileSearchReplyTimeout      = 5 * time.Second
+	FullMatchesThreshold        = 2
+
+	RecentSearchRequestTimeout = 500 * time.Millisecond // 1/2 second
 
 	PrivateMessageHopLimit = 5
 )
@@ -84,8 +91,13 @@ type Gossiper struct {
 	nextHopMux sync.Mutex
 
 	messageStorage          *MessageStorage          // accessed eg from message-processor and from rumor-mongering, is hard-synchronized
-	sharedFilesManager      *SharedFilesManager      // accessed only from message-processor
+	sharedFilesManager      *SharedFilesManager      // accessed eg from message-processor and from search-request, is hard-synchronized
 	downloadingFilesManager *DownloadingFilesManager // accessed eg from message-processor and from file-downloading, is soft-synchronized
+
+	currentSearchRequest *CurrentSearchRequest
+
+	recentSearchRequestsMux sync.Mutex
+	recentSearchRequests    map[string]bool // set of recently answered search-requests, don't answer them now, key = "{origin}-{keywords separated with coma}"
 
 	isSimpleMode bool       // in simple mode sending only simple messages
 	l            *log.Entry // logger
@@ -96,9 +108,10 @@ func NewGossiper(name string, uiport int, peersAddress string, peers string, isS
 
 	g := &Gossiper{}
 	g.messageStorage = InitMessageStorage(name)
-	g.sharedFilesManager = InitSharedFilesManager()
-	g.downloadingFilesManager = InitDownloadingFilesManager()
+	g.sharedFilesManager = InitSharedFilesManager(logger)
+	g.downloadingFilesManager = InitDownloadingFilesManager(logger)
 	g.nextHop = make(map[string]*UDPAddr)
+	g.recentSearchRequests = make(map[string]bool)
 	g.l = logger
 	g.isSimpleMode = isSimpleMode
 
@@ -264,10 +277,11 @@ func (g *Gossiper) sendPacketWithNextHop(origin string, gp *GossipPacket) {
 	g.nextHopMux.Lock()
 	defer g.nextHopMux.Unlock()
 	if g.nextHop[origin] != nil {
+		g.l.Debug("sending packet with next hop to " + origin + ", next hop appeared to be: " + g.nextHop[origin].String() + " whole map is ", g.nextHop)
 		agp := &AddressedGossipPacket{Address: g.nextHop[origin], Packet: gp}
 		peerMessagesToSend <- agp
 	} else {
-		log.Warn("unable to send packet, because unknown origin in nextHop function")
+		g.l.Warn("unable to send packet, because unknown origin in nextHop function")
 	}
 }
 
@@ -419,6 +433,9 @@ func (g *Gossiper) processClientMessage(cmsg *ClientMessage) {
 	} else if cmsg.ToDownload != nil {
 		g.l.Info("got client to download message")
 		g.processClientDataRequest(cmsg.ToDownload)
+	} else if cmsg.ToSearch != nil {
+		g.l.Info("got client to search message")
+		g.processClientSearchRequest(cmsg.ToSearch)
 	}
 }
 
@@ -446,6 +463,12 @@ func (g *Gossiper) processAddressedGossipPacket(agp *AddressedGossipPacket) {
 	} else if gp.DataReply != nil {
 		g.l.Info("got data reply message")
 		g.processAddressedDataReply(gp.DataReply, address)
+	} else if gp.SearchRequest != nil {
+		g.l.Info("got search request message")
+		g.processAddressedSearchRequest(gp.SearchRequest, address)
+	} else if gp.SearchReply != nil {
+		g.l.Info("got search reply message")
+		g.processAddressedSearchReply(gp.SearchReply, address)
 	}
 }
 
@@ -482,7 +505,7 @@ func (g *Gossiper) processAddressedStatusPacket(sp *StatusPacket, address *UDPAd
 	} else if otherHasSomethingNew {
 		peerMessagesToSend <- &AddressedGossipPacket{Packet: &GossipPacket{Status: g.messageStorage.GetCurrentStatusPacket()}, Address: address}
 	} else {
-		log.Info("nothing interesting in the status")
+		g.l.Info("nothing interesting in the status")
 		fmt.Println("IN SYNC WITH " + address.String())
 	}
 	// else do nothing at all
@@ -537,7 +560,7 @@ func (g *Gossiper) processPrivateMessage(pmsg *PrivateMessage) {
 		return
 	}
 	if pmsg.HopLimit <= 0 {
-		log.Warn("hop limit for forwarding exceeded, drop the msg..")
+		g.l.Warn("hop limit for forwarding exceeded, drop the msg..")
 		return
 	}
 
@@ -559,46 +582,24 @@ func (g *Gossiper) processDataRequest(drqmsg *DataRequest) {
 		if requestedData == nil {
 			requestedData = g.downloadingFilesManager.GetChunkOrMetafile(drqmsg.HashValue) // look not only in shared, but also in downloaded
 			if requestedData == nil {
-				log.Error("requested unexisting chunk")
+				g.l.Error("requested unexisting chunk: requested by " + drqmsg.Origin)
 				return
 			}
 		}
 
+		g.l.Info("answered to data request from " + drqmsg.Origin + " with chunk/metafile")
 		drpmsg := &DataReply{HashValue: drqmsg.HashValue, Origin: gossiperName, Destination: drqmsg.Origin, HopLimit: PrivateMessageHopLimit, Data: requestedData}
 		g.sendPacketWithNextHop(drpmsg.Destination, &GossipPacket{DataReply: drpmsg})
 		return
 	}
 
 	if drqmsg.HopLimit <= 0 {
-		log.Warn("hop limit for forwarding exceeded, drop the msg..")
+		g.l.Warn("hop limit for forwarding exceeded, drop the msg..")
 		return
 	}
 
 	drqmsg.HopLimit = drqmsg.HopLimit - 1
 	g.sendPacketWithNextHop(drqmsg.Destination, &GossipPacket{DataRequest: drqmsg})
-}
-
-func (g *Gossiper) processClientDataRequest(cdrqmsg *ClientToDownloadMessage) {
-	origin := cdrqmsg.Destination
-	downloadingFilesChannelsMux.Lock() // if locking later, rc is introduced
-	if !g.downloadingFilesManager.StartDownloadingFromOrigin(origin, cdrqmsg.Name, cdrqmsg.HashValue) {
-		log.Error("cannot start downloading, because downloading from this peer is already in progress")
-		downloadingFilesChannelsMux.Unlock()
-		return
-	}
-
-	if _, ok := downloadingFilesChannels[origin]; ok {
-		log.Error("whaaat, map is not clean!") // we trust dfm more
-	}
-	downloadingFilesChannels[origin] = make(chan *DataReply)
-	downloadingFilesChannelsMux.Unlock()
-
-	// send first data request and start file-downloading goroutine
-	drqmsg := &DataRequest{Destination: origin, HopLimit: PrivateMessageHopLimit, HashValue: cdrqmsg.HashValue[:], Origin: g.name.Load().(string)}
-	gp := &GossipPacket{DataRequest: drqmsg}
-	g.sendPacketWithNextHop(origin, gp)
-
-	go g.startFileDownloadingGoroutine(origin, cdrqmsg.HashValue[:])
 }
 
 func (g *Gossiper) processAddressedDataReply(drpmsg *DataReply, address *UDPAddr) {
@@ -611,7 +612,7 @@ func (g *Gossiper) processDataReply(drpmsg *DataReply) {
 
 	if drpmsg.Destination != gossiperName {
 		if drpmsg.HopLimit <= 0 {
-			log.Warn("hop limit for forwarding exceeded, drop the drpmsg..")
+			g.l.Warn("hop limit for forwarding exceeded, drop the drpmsg..")
 			return
 		}
 
@@ -627,8 +628,94 @@ func (g *Gossiper) processDataReply(drpmsg *DataReply) {
 	if ch, ok := downloadingFilesChannels[drpmsg.Origin]; ok {
 		ch <- drpmsg
 	} else {
-		log.Warn("we are downloading nothing from this host! (the host is not present in the map)")
+		g.l.Warn("we are downloading nothing from this host! (the host is not present in the map)")
 	}
+}
+
+func (g *Gossiper) processAddressedSearchRequest(srqmsg *SearchRequest, address *UDPAddr) {
+	// check, that we haven't answered same search request not so long ago
+	g.recentSearchRequestsMux.Lock()
+	setkey := GetRecentSearchRequestSetKey(srqmsg.Origin, srqmsg.Keywords)
+	_, recentlyAnswered := g.recentSearchRequests[setkey]
+	if recentlyAnswered {
+		g.l.Warn("this search request was already recently answered, dropping it...")
+		return
+	}
+
+	// else start processing & schedule removing from map
+	g.recentSearchRequests[setkey] = true
+	go func() {
+		// search-request-timeout function
+		time.Sleep(RecentSearchRequestTimeout)
+		g.recentSearchRequestsMux.Lock()
+		delete(g.recentSearchRequests, setkey)
+		g.recentSearchRequestsMux.Unlock()
+	}()
+	g.recentSearchRequestsMux.Unlock()
+
+	//g.updateNextHop(srqmsg.Origin, address)
+	g.processSearchRequest(srqmsg)
+}
+
+func (g *Gossiper) processAddressedSearchReply(srpmsg *SearchReply, address *UDPAddr) {
+	gossiperName := g.name.Load().(string)
+
+	if srpmsg.Destination != gossiperName {
+		if srpmsg.HopLimit <= 0 {
+			g.l.Warn("hop limit for forwarding exceeded, drop the srpmsg..")
+			return
+		}
+
+		srpmsg.HopLimit = srpmsg.HopLimit - 1
+		g.sendPacketWithNextHop(srpmsg.Destination, &GossipPacket{SearchReply: srpmsg})
+		return
+	}
+
+	// else msg addressed to this gossiper:
+	if g.currentSearchRequest == nil || !g.currentSearchRequest.IsAlive() {
+		g.l.Warn("got search reply message, but current-search-request has either not been initiated, or was already finished, dropping the message...")
+		return
+	}
+
+	g.currentSearchRequest.ForwardSearchReply(srpmsg)
+}
+
+func (g *Gossiper) processClientDataRequest(cdrqmsg *ClientToDownloadMessage) {
+	origin := cdrqmsg.Destination
+	downloadingFilesChannelsMux.Lock() // if locking later, rc is introduced
+	if !g.downloadingFilesManager.StartDownloadingFromOrigin(origin, cdrqmsg.Name, cdrqmsg.HashValue) {
+		g.l.Error("cannot start downloading, because downloading from this peer is already in progress")
+		downloadingFilesChannelsMux.Unlock()
+		return
+	}
+
+	if _, ok := downloadingFilesChannels[origin]; ok {
+		g.l.Error("whaaat, map is not clean!") // we trust dfm more
+	}
+	downloadingFilesChannels[origin] = make(chan *DataReply)
+	downloadingFilesChannelsMux.Unlock()
+
+	// send first data request and start file-downloading goroutine
+	g.l.Info("starting file-downloading goroutine & requesting metafile from " + origin + " for file " + cdrqmsg.Name)
+	drqmsg := &DataRequest{Destination: origin, HopLimit: PrivateMessageHopLimit, HashValue: cdrqmsg.HashValue[:], Origin: g.name.Load().(string)}
+	gp := &GossipPacket{DataRequest: drqmsg}
+	g.sendPacketWithNextHop(origin, gp)
+
+	go g.startFileDownloadingGoroutine(origin, cdrqmsg.HashValue[:])
+}
+
+func (g *Gossiper) processClientSearchRequest(csrqmsg *ClientToSearchMessage) {
+	if g.currentSearchRequest != nil && g.currentSearchRequest.IsAlive() {
+		g.l.Error("cannot start new search request, until previous haven't finished, retry your query later pls...")
+		return
+	}
+
+	g.currentSearchRequest = nil // feed gc with new victim
+
+	ch := make(chan *SearchReply)
+	g.currentSearchRequest = InitCurrentSearchRequest(ch, g.clientAddress.Port, g.l)
+
+	go g.startFileSearchingGoroutine(csrqmsg.Keywords, int(csrqmsg.Budget), ch, csrqmsg.DownloadAfterSearch)
 }
 
 // -------------------------------------------
@@ -658,6 +745,54 @@ func (g *Gossiper) spreadTheRumor(rmsg *RumorMessage, peer *UDPAddr) {
 	fmt.Println("MONGERING with " + peer.String())
 
 	go g.startRumorMongeringThread(rmsg, ch, peer)
+}
+
+// called both by message-processor & search-request goroutine
+func (g *Gossiper) processSearchRequest(srqmsg *SearchRequest) {
+	gossiperName := g.name.Load().(string)
+
+	// if got message not from this gossiper, scan its shared&downloaded files for what they ask for
+	budget := int(srqmsg.Budget)
+	if srqmsg.Origin != gossiperName {
+		sharedMatchedFiles := g.sharedFilesManager.GetSearchResults(srqmsg.Keywords)
+		if len(sharedMatchedFiles) > 0 {
+			g.l.Info("got " + strconv.Itoa(len(sharedMatchedFiles)) + " shared matched files for search request " + strings.Join(srqmsg.Keywords, ",") + " from " + srqmsg.Origin)
+		}
+		downloadedMatchedFiles := g.downloadingFilesManager.GetSearchResults(srqmsg.Keywords)
+		if len(downloadedMatchedFiles) > 0 {
+			g.l.Info("got " + strconv.Itoa(len(downloadedMatchedFiles)) + " download(ed|ing) matched files for search request " + strings.Join(srqmsg.Keywords, ",") + " from " + srqmsg.Origin)
+		}
+
+		matchedFiles := append(sharedMatchedFiles, downloadedMatchedFiles...)
+		if len(matchedFiles) > 0 {
+			g.l.Info("got some matches on " + gossiperName + " for search-request: " + strings.Join(srqmsg.Keywords, ","))
+			gp := &GossipPacket{SearchReply:&SearchReply{Origin:gossiperName, Destination:srqmsg.Origin, HopLimit:PrivateMessageHopLimit, Results:matchedFiles}}
+			g.sendPacketWithNextHop(srqmsg.Origin, gp)
+		} else {
+			g.l.Info("got no matches on " + gossiperName + " for search-request: " + strings.Join(srqmsg.Keywords, ","))
+		}
+
+		budget = budget - 1
+		if budget <= 0 {
+			g.l.Info("budget on " + strings.Join(srqmsg.Keywords, ",") + " became zero, dropping it, sry")
+			return
+		}
+	}
+
+	// send search request further:
+	g.peersSliceMux.Lock()
+	defer g.peersSliceMux.Unlock()
+	residual := budget % len(g.peers)
+	for _, peer := range g.peers {
+		newbudget := budget / len(g.peers)
+		if residual > 0 {
+			newbudget++
+			residual--
+		}
+
+		agp := &AddressedGossipPacket{Address: peer, Packet: &GossipPacket{SearchRequest: &SearchRequest{Budget: uint64(newbudget), Keywords: srqmsg.Keywords, Origin: srqmsg.Origin}}}
+		peerMessagesToSend <- agp
+	}
 }
 
 // --------------------------------------
@@ -717,7 +852,7 @@ func (g *Gossiper) startFileDownloadingGoroutine(origin string, latestRequestedH
 	downloadingFilesChannelsMux.Lock()
 	ch, ok := downloadingFilesChannels[origin]
 	if !ok {
-		log.Error("some terrible race condition occured, channel is not in the map! Downloading goroutine dies..")
+		g.l.Error("some terrible race condition occured, channel is not in the map! Downloading goroutine dies..")
 		return
 	}
 	downloadingFilesChannelsMux.Unlock()
@@ -741,6 +876,7 @@ func (g *Gossiper) startFileDownloadingGoroutine(origin string, latestRequestedH
 			}
 
 			// resend message we didn't receive reply for
+			g.l.Info("resending msg because of timeout: DataRequest with hash: " + hex.EncodeToString(latestRequestedHash))
 			dataRequest := &DataRequest{Destination: origin, HopLimit: PrivateMessageHopLimit, HashValue: latestRequestedHash, Origin: g.name.Load().(string)}
 			gp := &GossipPacket{DataRequest: dataRequest}
 			g.sendPacketWithNextHop(origin, gp)
@@ -749,11 +885,12 @@ func (g *Gossiper) startFileDownloadingGoroutine(origin string, latestRequestedH
 			downloadingFilesChannelsMux.Lock() // locking to do removing from map & dfm synchronicaly
 			isFinished := g.downloadingFilesManager.ProcessDataReply(origin, dataReplyPacket)
 			if isFinished == nil {
-				g.l.Error("an error occured when downloading from the peer, drop the download process")
-				delete(downloadingFilesChannels, origin)
-				g.downloadingFilesManager.DropDownloading(origin)
+				g.l.Error("an error occured when downloading from the peer, try to request the same chunk/metafile once again, hash is: " + hex.EncodeToString(latestRequestedHash))
+				dataRequest := &DataRequest{Destination: origin, HopLimit: PrivateMessageHopLimit, HashValue: latestRequestedHash, Origin: g.name.Load().(string)}
+				gp := &GossipPacket{DataRequest: dataRequest}
+				g.sendPacketWithNextHop(origin, gp)
 				downloadingFilesChannelsMux.Unlock()
-				return
+				break
 			}
 
 			if *isFinished {
@@ -779,6 +916,76 @@ func (g *Gossiper) startFileDownloadingGoroutine(origin string, latestRequestedH
 			dataRequest := &DataRequest{Destination: origin, HopLimit: PrivateMessageHopLimit, HashValue: dataRequestHash, Origin: g.name.Load().(string)}
 			gp := &GossipPacket{DataRequest: dataRequest}
 			g.sendPacketWithNextHop(origin, gp)
+		}
+	}
+}
+
+// called only by the only file-searching goroutine:
+func (g *Gossiper) startFileSearchingGoroutine(keywords []string, budget int, ch chan *SearchReply, downloadAfterSearch bool) {
+	maxAllowedBudget := DefaultMaxSearchBudget
+	if budget == 0 {
+		budget = DefaultStartingSearchBudget
+	} else {
+		// budget is specified explicitly, so small hack to make the request only once
+		maxAllowedBudget = budget
+	}
+
+	ticker := time.NewTicker(1)
+
+	// do-while simulation
+	for true {
+		select {
+		case <-ticker.C:
+			if budget > maxAllowedBudget {
+				if budget > maxAllowedBudget + 1 {
+					g.l.Warn("reached max budget & didn't get enough full matches, leaving the function, defeated...")
+					g.currentSearchRequest.Shutdown()
+					return
+				}
+
+				g.l.Info("reached maximum budget, stopped sending search-requests, just wait a bit more for more answers to arrive...")
+				ticker = time.NewTicker(FileSearchReplyTimeout * 2)
+				budget++
+				continue
+			}
+
+			// send search request:
+			g.l.Info("sending search request for keywords: " + strings.Join(keywords,",") + " for budget: " + strconv.Itoa(budget))
+			searchRequest := &SearchRequest{Budget: uint64(budget), Keywords: keywords, Origin: g.name.Load().(string)}
+			g.processSearchRequest(searchRequest)
+
+			budget++
+			ticker = time.NewTicker(FileSearchReplyTimeout)
+		case dataReplyPacket := <-ch:
+			for _, res := range dataReplyPacket.Results {
+				// here a great question about task formulation comes. I consider only full matches significant.
+				// we do search until we get threshold of full matches, where full match is a gossiper, which "has all the chunks"
+				// then we can start downloading from this peer. I believe, that it is ok with task we're required to implement
+				if uint64(len(res.ChunkMap)) == res.ChunkCount {
+					// this is a full match
+					g.l.Debug("got a full match from " + dataReplyPacket.Origin + " on " + res.FileName + ", has " + strconv.Itoa(g.currentSearchRequest.GetFullMatchesNumber()) + " matches now (before adding new)")
+					metahash, err := GetTypeStrictHash(res.MetafileHash)
+					if err != nil {
+						g.l.Warn("cannot convert metafile hash...")
+						continue
+					}
+
+					fullMatch := FullSearchMatch{Origin:dataReplyPacket.Origin, Filename:res.FileName, MetafileHash:metahash}
+					g.currentSearchRequest.AddFullMatch(&fullMatch)
+				} else {
+					g.l.Debug("got a partial match from " + dataReplyPacket.Origin + " on " + res.FileName + ", skipping it, see code for comment on why so is done")
+				}
+			}
+
+			if g.currentSearchRequest.GetFullMatchesNumber() >= FullMatchesThreshold {
+				g.l.Info("reached threshold for search request: " + strings.Join(keywords,",") + ", stopping the search-request goroutine")
+				if downloadAfterSearch {
+					g.l.Info("initiating download process..")
+					g.currentSearchRequest.DownloadAnyFile(g.name.Load().(string))
+				}
+				g.currentSearchRequest.Shutdown()
+				return
+			}
 		}
 	}
 }

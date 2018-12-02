@@ -14,12 +14,14 @@ type AddressedGossipPacket struct {
 
 // the invariant on the packet is that only one of the fields is not nil
 type GossipPacket struct {
-	Simple      *SimpleMessage
-	Rumor       *RumorMessage
-	Status      *StatusPacket
-	Private     *PrivateMessage
-	DataRequest *DataRequest
-	DataReply   *DataReply
+	Simple        *SimpleMessage
+	Rumor         *RumorMessage
+	Status        *StatusPacket
+	Private       *PrivateMessage
+	DataRequest   *DataRequest
+	DataReply     *DataReply
+	SearchRequest *SearchRequest
+	SearchReply   *SearchReply
 }
 
 type SimpleMessage struct {
@@ -93,6 +95,7 @@ type ClientMessage struct {
 	Private    *ClientPrivateMessage
 	ToShare    *ClientToShareMessage
 	ToDownload *ClientToDownloadMessage
+	ToSearch   *ClientToSearchMessage
 }
 
 type ClientRumorMessage struct {
@@ -114,6 +117,12 @@ type ClientToDownloadMessage struct {
 	Name        string // name to give to file after downloading finishes
 	Destination string
 	HashValue   [32]byte
+}
+
+type ClientToSearchMessage struct {
+	Keywords            []string
+	Budget              uint64 // 0 = no budget provided
+	DownloadAfterSearch bool
 }
 
 func (rmsg *RumorMessage) String() string {
