@@ -9,6 +9,11 @@ NC='\033[0m'
 # and then:
 # sharing file at a -> downloading file at d from a -> downloading file at b from d
 
+echo "Kill all the peerster processes..."
+kill $(ps aux | grep '\.\/[P]eerster' | awk '{print $2}')
+sleep 1
+echo "Killed"
+
 aUIPort=12001
 bUIPort=12002
 cUIPort=12003
@@ -30,6 +35,7 @@ msgD1="Readytoreceive!"
 sharedFileName="1M_file.txt"
 downloadedFileName="downloaded-$sharedFileName"
 
+rm *.out
 rm Peerster
 go build
 cd client
@@ -45,7 +51,7 @@ cd ..
 # let the gossipers initialize
 sleep 1
 
-# some init messages, so a and d will know about each other (with only rtimer initalization pr
+# some init messages, so a and d will know about each other
 ./client/client -UIPort="$aUIPort" -msg="LetsKnowEachOther1"
 ./client/client -UIPort="$dUIPort" -msg="LetsKnowEachOther2"
 ./client/client -UIPort="$aUIPort" -msg="LetsKnowEachOther3"
@@ -60,7 +66,7 @@ rm "$sharedFileName"
 dd if=/dev/zero of="$sharedFileName"  bs=1010K  count=1 # copy a lot of nulls to file (a bit smaller, than 1M for technical reasons, haha)
 echo "ahahha" >> "$sharedFileName"
 cd ..
-rm _Downloads/"*$downloadedFileName"
+rm _Downloads/"*$sharedFileName"
 
 # share big file on "a":
 ./client/client -UIPort="$aUIPort" -file="$sharedFileName"
