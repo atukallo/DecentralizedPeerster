@@ -60,7 +60,7 @@ rm "$sharedFileName"
 dd if=/dev/zero of="$sharedFileName"  bs=1010K  count=1 # copy a lot of nulls to file (a bit smaller, than 1M for technical reasons, haha)
 echo "ahahha" >> "$sharedFileName"
 cd ..
-rm _Downloads/"$downloadedFileName"
+rm _Downloads/"*$downloadedFileName"
 
 # share big file on "a":
 ./client/client -UIPort="$aUIPort" -file="$sharedFileName"
@@ -78,12 +78,12 @@ sleep 2
 echo "Downloading on d from a should have finished"
 
 # try to download file from "d" now: check if downloaded files are shared
-./client/client -UIPort="$bUIPort" -file="b-$downloadedFileName" -dest="d" -request="$fileHash"
+./client/client -UIPort="$bUIPort" -file="b1-$downloadedFileName" -dest="d" -request="$fileHash"
 
 sleep 2
 echo "Downloading on b from d should have finished"
 
-./client/client -UIPort="$bUIPort" -file="b-$downloadedFileName" -dest="d" -request="$fileHash"
+./client/client -UIPort="$bUIPort" -file="b2-$downloadedFileName" -dest="d" -request="$fileHash"
 
 sleep 2
 echo "Do downloading on b from d once again just for fun"
@@ -103,11 +103,20 @@ else
     echo "Bad output is: $(diff _SharedFiles/$sharedFileName _Downloads/d-$downloadedFileName 2>&1)"
 fi
 
-if [ -z "$(diff _SharedFiles/$sharedFileName _Downloads/b-$downloadedFileName 2>&1)" ]; then # err moved to out
+if [ -z "$(diff _SharedFiles/$sharedFileName _Downloads/b1-$downloadedFileName 2>&1)" ]; then # err moved to out
     # if output of this command is empty
     echo -e "${GREEN}***PASSED***${NC}"
     echo "File $sharedFileName succesfully transfered from d to b and saved at b as b-$downloadedFileName"
 else
     echo -e "${RED}***FAILED***${NC}"
-    echo "Bad output is: $(diff _SharedFiles/$sharedFileName _Downloads/b-$downloadedFileName 2>&1)"
+    echo "Bad output is: $(diff _SharedFiles/$sharedFileName _Downloads/b1-$downloadedFileName 2>&1)"
+fi
+
+if [ -z "$(diff _SharedFiles/$sharedFileName _Downloads/b2-$downloadedFileName 2>&1)" ]; then # err moved to out
+    # if output of this command is empty
+    echo -e "${GREEN}***PASSED***${NC}"
+    echo "File $sharedFileName succesfully transfered from d to b and saved at b as b-$downloadedFileName"
+else
+    echo -e "${RED}***FAILED***${NC}"
+    echo "Bad output is: $(diff _SharedFiles/$sharedFileName _Downloads/b2-$downloadedFileName 2>&1)"
 fi

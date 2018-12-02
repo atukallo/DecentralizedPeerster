@@ -29,6 +29,10 @@ func InitDownloadingFile(name string, metahash [32]byte) *DownloadingFile {
 }
 
 func (df *DownloadingFile) fileHasDownloadedChunk(hashValue [32]byte) bool {
+	if df.Metafile == nil {
+		return false // nothing is downloaded yet
+	}
+
 	_, isCorrectChunk := df.ChunksHashesSet[hashValue]
 	_, isNotDownloaded := df.ChunksToDownload[hashValue]
 

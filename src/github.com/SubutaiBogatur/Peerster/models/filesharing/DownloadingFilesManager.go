@@ -8,7 +8,7 @@ import (
 	"sync"
 )
 
-// every value in map is accessed only with 1 process at the same time!
+// unfortunately uses hard-synchronization
 // struct plays double role:
 // * downloaded chunks are stored here, so when the file is fully downloaded, it is rebuild from chunks and saved to (hdd|ssd)
 // * we consider, that all the downloaded chunks are at the same time shared, So struct also provides access to chunks, even when the file was fully downloaded
@@ -51,7 +51,10 @@ func (dfm *DownloadingFilesManager) StartDownloadingFromOrigin(origin string, fi
 
 // returns if downloading is finished, nil stays for error
 func (dfm *DownloadingFilesManager) ProcessDataReply(origin string, drmsg *models.DataReply) *bool {
-	df, ok := dfm.downloadingFiles[origin] // reading can be done without mutex, because every entry is accessed with one thread
+	dfm.m.Lock()
+	defer dfm.m.Unlock()
+
+	df, ok := dfm.downloadingFiles[origin]
 	if !ok {
 		log.Error("such origin is not present..")
 		return nil // downloading has not really started...
@@ -59,11 +62,9 @@ func (dfm *DownloadingFilesManager) ProcessDataReply(origin string, drmsg *model
 
 	isFinished := df.ProcessDataReply(drmsg)
 	if isFinished != nil && *isFinished {
-		dfm.m.Lock() // map modification better be synchronized
 		downloadedFile := dfm.downloadingFiles[origin]
 		delete(dfm.downloadingFiles, origin)
 		dfm.downloadedFiles[downloadedFile.MetaHash] = downloadedFile // save file for chunk accessing
-		dfm.m.Unlock()
 	}
 
 	return isFinished
