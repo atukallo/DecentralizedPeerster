@@ -128,9 +128,21 @@ sleep 1
 
 ./client/client -UIPort="$brUIPort" -keywords="1M"
 
-#sleep 3
-#echo "So, br should have found the file and downloaded it, killing the peers..."
-#echo "Kill all the peerster processes..."
-#kill $(ps aux | grep '\.\/[P]eerster' | awk '{print $2}')
-#sleep 1
-#echo "Killed"
+sleep 2
+echo "Okay, searching & downloading should have been finished on br. It downloaded either from bl or tr"
+
+if [ -z "$(diff _SharedFiles/$sharedFileName _Downloads/br-$blDownloadedFileName 2>&1)" ] || [ -z "$(diff _SharedFiles/$sharedFileName _Downloads/br-$blDownloadedFileName 2>&1)" ]; then # err moved to out
+    # if output of one of two commands is empty:
+    echo -e "${GREEN}***PASSED***${NC}"
+    echo "File $sharedFileName succesfully transfered from (tr|bl) to br and saved at br after searching, my congratulations, officer"
+    echo -e "${GREEN}***MY CONGRATULATIONS SIR***${NC}"
+else
+    echo -e "${RED}***FAILED***${NC}"
+    echo "Bad output is: $(diff _SharedFiles/$sharedFileName _Downloads/br-$blDownloadedFileName 2>&1)"
+    echo "Or: $(diff _SharedFiles/$sharedFileName _Downloads/br-$trDownloadedFileName 2>&1)"
+fi
+
+echo "Kill all the peerster processes..."
+kill $(ps aux | grep '\.\/[P]eerster' | awk '{print $2}')
+sleep 1
+echo "Killed"
