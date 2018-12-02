@@ -21,22 +21,26 @@ import (
 // Some documentation on what's happening
 //
 // We will have threads:
-// * client-reader      thread : the only port reading from client socket. Sends client message to message-processor
-// * peer-reader        thread : the only port reading from peer socket. Sends GossipPackets to message-processor
-// * peer-writer        thread : the only port writing to peer socket. Listens to channel for GossipPackets and writes them
-// * anti-entropy-timer thread : goroutine sends a status to random peer every timeout seconds
-// * route-rumoring     thread : once in a timer sends empty rumor message to random peers, so everyone will know about this origin (accesses nothing)
-// * message-processor  thread : is an abstraction on client-listener, peer-listener threads. Receives all the messages and for every message:
-//     + rumor-msg    : upd status, send status back, send rumor randomly further, start rumor-mongering thread waiting for status
-//     + status-msg   : push it to one of the rumor-mongering threads (if rumor mongering is not in progress, then compare statuses and start it)
-//     + private      : ezy - forward if needed, else display
-//     + data-request : just answer with needed data, no state saved
-//     + data-reply   : answer with next request (if needed) and start file-downloading thread to wait for next data-reply or timeout
-// * rumor-mongering    thread : thread waits either for status-msg to arrive or for timeout and stores rumor-msg, it was initiated for
+// * client-reader        thread : the only port reading from client socket. Sends client message to message-processor
+// * peer-reader          thread : the only port reading from peer socket. Sends GossipPackets to message-processor
+// * peer-writer          thread : the only port writing to peer socket. Listens to channel for GossipPackets and writes them
+// * anti-entropy-timer   thread : goroutine sends a status to random peer every timeout seconds
+// * route-rumoring       thread : once in a timer sends empty rumor message to random peers, so everyone will know about this origin (accesses nothing)
+// * message-processor    thread : is an abstraction on client-listener, peer-listener threads. Receives all the messages and for every message:
+//     + rumor-msg      : upd status, send status back, send rumor randomly further, start rumor-mongering thread waiting for status
+//     + status-msg     : push it to one of the rumor-mongering threads (if rumor mongering is not in progress, then compare statuses and start it)
+//     + private        : ezy - forward if needed, else display
+//     + data-request   : just answer with needed data, no state saved
+//     + data-reply     : answer with next request (if needed) and start file-downloading thread to wait for next data-reply or timeout
+//     + search-request : answer with needed data & start search-reply-timeout thread not to answer this request once again
+//     + search-reply   : put message via channel (via struct) to the only search-request thread
+// * rumor-mongering      thread : thread waits either for status-msg to arrive or for timeout and stores rumor-msg, it was initiated for
 //     + status-msg : cmp (store sync-safe Map for VectorClock, which are edited from message-processor) and send new msg via peer-communicator
 //     + timeout    : 1/2 & send new rumor-msg via peer-communicator
-// * webserver          thread : listens to http-requests on a given port and reads / writes from gossiper object
-// * file-downloading   thread : thread waits either for DataReply msg from fixed origin or for timeout
+// * webserver            thread : listens to http-requests on a given port and reads / writes from gossiper object
+// * file-downloading     thread : thread waits either for DataReply msg from fixed origin or for timeout
+// * search-reply-timeout thread : we don't answer the same search-request for some time after we answered it
+// * search-request       thread : the only goroutine, which maintains current search-request: reads search-replies and repeats search-requests with more budget
 
 // command line arguments
 var (
