@@ -70,6 +70,6 @@ func (sfm *SharedFilesManager) GetChunkOrMetafile(hashValue []byte) []byte {
 		}
 	}
 
-	log.Warn("the chunk or metafile with requested hash not found")
+	log.Info("the chunk or metafile with requested hash not found in shared files")
 	return nil
 }

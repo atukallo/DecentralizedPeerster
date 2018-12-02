@@ -6,7 +6,8 @@ NC='\033[0m'
 
 # We are building network like:
 # a - b - c - d
-# and then sharing files from a to d to test the system
+# and then:
+# sharing file at a -> downloading file at d from a -> downloading file at b from d
 
 aUIPort=12001
 bUIPort=12002
@@ -29,8 +30,10 @@ msgD1="Readytoreceive!"
 sharedFileName="1M_file.txt"
 downloadedFileName="downloaded-$sharedFileName"
 
+rm Peerster
 go build
 cd client
+rm client
 go build
 cd ..
 
@@ -69,11 +72,21 @@ echo "~~~~~~ File shared, got hash: $fileHash, starting downloading ~~~~~~"
 
 
 # request file on "d":
-./client/client -UIPort="$dUIPort" -file="$downloadedFileName" -dest="a" -request="$fileHash"
+./client/client -UIPort="$dUIPort" -file="d-$downloadedFileName" -dest="a" -request="$fileHash"
 
 sleep 2
-echo "Downloading should have been finished"
+echo "Downloading on d from a should have finished"
 
+# try to download file from "d" now: check if downloaded files are shared
+./client/client -UIPort="$bUIPort" -file="b-$downloadedFileName" -dest="d" -request="$fileHash"
+
+sleep 2
+echo "Downloading on b from d should have finished"
+
+./client/client -UIPort="$bUIPort" -file="b-$downloadedFileName" -dest="d" -request="$fileHash"
+
+sleep 2
+echo "Do downloading on b from d once again just for fun"
 
 echo "Kill all the peerster processes..."
 kill $(ps aux | grep '\.\/[P]eerster' | awk '{print $2}')
@@ -81,11 +94,20 @@ sleep 1
 echo "Killed"
 
 echo "Tests running.."
-if [ -z "$(diff _SharedFiles/$sharedFileName _Downloads/$downloadedFileName) 2>&1" ]; then # err moved to out
+if [ -z "$(diff _SharedFiles/$sharedFileName _Downloads/d-$downloadedFileName 2>&1)" ]; then # err moved to out
     # if output of this command is empty
     echo -e "${GREEN}***PASSED***${NC}"
-    echo "File $sharedFileName succesfully transfered from a to d and saved at d as $downloadedFileName"
+    echo "File $sharedFileName succesfully transfered from a to d and saved at d as d-$downloadedFileName"
 else
     echo -e "${RED}***FAILED***${NC}"
-    echo "Bad output is: $(diff _SharedFiles/$sharedFileName _Downloads/$downloadedFileName)"
+    echo "Bad output is: $(diff _SharedFiles/$sharedFileName _Downloads/d-$downloadedFileName 2>&1)"
+fi
+
+if [ -z "$(diff _SharedFiles/$sharedFileName _Downloads/b-$downloadedFileName 2>&1)" ]; then # err moved to out
+    # if output of this command is empty
+    echo -e "${GREEN}***PASSED***${NC}"
+    echo "File $sharedFileName succesfully transfered from d to b and saved at b as b-$downloadedFileName"
+else
+    echo -e "${RED}***FAILED***${NC}"
+    echo "Bad output is: $(diff _SharedFiles/$sharedFileName _Downloads/b-$downloadedFileName 2>&1)"
 fi

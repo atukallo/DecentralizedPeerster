@@ -88,7 +88,7 @@ type Gossiper struct {
 }
 
 func NewGossiper(name string, uiport int, peersAddress string, peers string, isSimpleMode bool) (*Gossiper, error) {
-	logger := log.WithField("bin", "gos")
+	logger := log.WithField("bin", "gos").WithField("name", name)
 
 	g := &Gossiper{}
 	g.messageStorage = InitMessageStorage(name)
@@ -546,14 +546,18 @@ func (g *Gossiper) processAddressedDataRequest(drqmsg *DataRequest, address *UDP
 	g.processDataRequest(drqmsg)
 }
 
+// gossiper answers with either (shared file data) or (download(ing|ed) file data)
 func (g *Gossiper) processDataRequest(drqmsg *DataRequest) {
 	gossiperName := g.name.Load().(string)
 
 	if drqmsg.Destination == gossiperName {
 		requestedData := g.sharedFilesManager.GetChunkOrMetafile(drqmsg.HashValue)
 		if requestedData == nil {
-			log.Error("requested unexisting chunk")
-			return
+			requestedData = g.downloadingFilesManager.GetChunkOrMetafile(drqmsg.HashValue) // look not only in shared, but also in downloaded
+			if requestedData == nil {
+				log.Error("requested unexisting chunk")
+				return
+			}
 		}
 
 		drpmsg := &DataReply{HashValue: drqmsg.HashValue, Origin: gossiperName, Destination: drqmsg.Origin, HopLimit: PrivateMessageHopLimit, Data: requestedData}
@@ -740,7 +744,15 @@ func (g *Gossiper) startFileDownloadingGoroutine(origin string, latestRequestedH
 			g.l.Debug("got chunk/metafile from " + dataReplyPacket.Origin)
 			downloadingFilesChannelsMux.Lock() // locking to do removing from map & dfm synchronicaly
 			isFinished := g.downloadingFilesManager.ProcessDataReply(origin, dataReplyPacket)
-			if isFinished {
+			if isFinished == nil {
+				g.l.Error("an error occured when downloading from the peer, drop the download process")
+				delete(downloadingFilesChannels, origin)
+				g.downloadingFilesManager.DropDownloading(origin)
+				downloadingFilesChannelsMux.Unlock()
+				return
+			}
+
+			if *isFinished {
 				g.l.Info("Great, downloading is finished from " + origin)
 				delete(downloadingFilesChannels, origin)
 				downloadingFilesChannelsMux.Unlock()
@@ -753,6 +765,11 @@ func (g *Gossiper) startFileDownloadingGoroutine(origin string, latestRequestedH
 			timeoutsLimit = FileDownloadTimeoutsLimit
 
 			dataRequestHash := g.downloadingFilesManager.GetDataRequestHash(origin)
+			if dataRequestHash == nil {
+				g.l.Error("cannot get a new chunk hash to download..")
+				break // wait for new msgs to come maybe
+			}
+
 			g.l.Debug("now requesting " + hex.EncodeToString(dataRequestHash))
 			latestRequestedHash = dataRequestHash
 			dataRequest := &DataRequest{Destination: origin, HopLimit: PrivateMessageHopLimit, HashValue: dataRequestHash, Origin: g.name.Load().(string)}

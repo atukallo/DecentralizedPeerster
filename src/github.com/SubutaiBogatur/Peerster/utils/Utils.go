@@ -39,3 +39,7 @@ func GetTypeStrictHash(hashValue []byte) ([32]byte, error) {
 func GetChunkFileName(hashValue [32]byte) string {
 	return hex.EncodeToString(hashValue[:]) + ".chunk"
 }
+
+func GetMetafileName(hashValue [32]byte) string {
+	return hex.EncodeToString(hashValue[:]) + ".metafile"
+}

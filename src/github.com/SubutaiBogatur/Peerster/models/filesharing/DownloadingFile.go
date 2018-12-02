@@ -15,55 +15,91 @@ import (
 type DownloadingFile struct {
 	Name string
 
-	MetaHash          [32]byte
-	MetaSliceByChunks [][32]byte
+	MetaHash [32]byte
+	Metafile []byte
 
-	ChunksToDownload map[[32]byte]bool // chunk_hash -> bool, is like a set
+	ChunksHashesSlice [][32]byte        // slice of all hashes of all chunks, used to store the order of chunks to rebuild the file, just parsed Metafile in fact
+	ChunksHashesSet   map[[32]byte]bool // same as slice, but set. Slice stores order, set provides O(1) access
+
+	ChunksToDownload map[[32]byte]bool // chunk_hash -> bool, is like ChunkHashesSet, but is modified with every new downloaded chunk
 }
 
 func InitDownloadingFile(name string, metahash [32]byte) *DownloadingFile {
 	return &DownloadingFile{Name: name, MetaHash: metahash} // all others nil
 }
 
-// returns true if downloading is finished
-func (df *DownloadingFile) ProcessDataReply(drpmsg *DataReply) bool {
+func (df *DownloadingFile) fileHasDownloadedChunk(hashValue [32]byte) bool {
+	_, isCorrectChunk := df.ChunksHashesSet[hashValue]
+	_, isNotDownloaded := df.ChunksToDownload[hashValue]
+
+	return df.MetaHash == hashValue || (isCorrectChunk && !isNotDownloaded)
+}
+
+func (df *DownloadingFile) getChunkOrMetafile(hashValue [32]byte) []byte {
+	if hashValue == df.MetaHash {
+		log.Info("returned metafile for downloading file")
+		return df.Metafile
+	}
+
+	if df.fileHasDownloadedChunk(hashValue) {
+		chunkPath := filepath.Join(DownloadsChunksPath, df.Name, GetChunkFileName(hashValue))
+		if _, err := os.Stat(chunkPath); os.IsNotExist(err) {
+			log.Error("existing chunk cannot be found!!!")
+			return nil
+		}
+
+		chunkBytes, err := ioutil.ReadFile(chunkPath)
+		if CheckErr(err) {
+			return nil
+		}
+
+		log.Info("returned chunk of downloading file")
+		return chunkBytes
+	}
+
+	// else requesting what's either not downloaded yet or no present at all
+	return nil
+}
+
+//returns true if downloading is finished, nil if error
+func (df *DownloadingFile) ProcessDataReply(drpmsg *DataReply) *bool {
 	typedHashValue, err := GetTypeStrictHash(drpmsg.HashValue)
 	if CheckErr(err) {
-		return false
+		return nil
 	}
 
 	data := drpmsg.Data
 	if sha256.Sum256(data) != typedHashValue {
 		log.Error("got error hash-value pair!")
-		return false
+		return nil
 	}
 
 	// if we received metafile:
-	if df.ChunksToDownload == nil {
+	if df.Metafile == nil {
 		df.gotMetafile(typedHashValue, data)
 		fmt.Println("DOWNLOADING metafile of " + df.Name + " from " + drpmsg.Origin)
-		return false
+		return new(bool) // ptr to false
 	}
-
 	// else this is not metahash:
 
 	if _, ok := df.ChunksToDownload[typedHashValue]; !ok {
-		log.Warn("got the chunk, which is not in metafile")
-		return false
+		log.Warn("got the chunk, which is not in metafile or was already downloaded")
+		return nil
 	}
 
 	// we got the chunk we were waiting for:
 	delete(df.ChunksToDownload, typedHashValue)
-	fmt.Println("DOWNLOADING " + df.Name + " chunk " + strconv.Itoa(len(df.MetaSliceByChunks)-len(df.ChunksToDownload)) + " from " + drpmsg.Origin)
+	fmt.Println("DOWNLOADING " + df.Name + " chunk " + strconv.Itoa(len(df.ChunksHashesSlice)-len(df.ChunksToDownload)) + " from " + drpmsg.Origin)
 	chunkFileName := GetChunkFileName(typedHashValue)
 	ioutil.WriteFile(filepath.Join(DownloadsChunksPath, df.Name, chunkFileName), data, FileCommonMode)
 
 	if len(df.ChunksToDownload) == 0 {
 		df.finishDownloading()
-		return true // even if errors occured, they seem not-repairable
+		a := true
+		return &a // even if errors occured, they seem not-repairable
 	}
 
-	return false
+	return new(bool)
 }
 
 func (df *DownloadingFile) gotMetafile(hashValue [32]byte, metafile []byte) {
@@ -72,13 +108,19 @@ func (df *DownloadingFile) gotMetafile(hashValue [32]byte, metafile []byte) {
 		return
 	}
 
-	df.MetaSliceByChunks = make([][32]byte, 0, len(metafile)/32)
+	df.Metafile = make([]byte, len(metafile)) // very strange bug if no copying is done
+	copy(df.Metafile, metafile)
+
+	// parse metafile to store it in inner structures:
+	df.ChunksHashesSlice = make([][32]byte, 0, len(metafile)/32)
+	df.ChunksHashesSet = make(map[[32]byte]bool)
 	df.ChunksToDownload = make(map[[32]byte]bool)
 	var currentChunk [32]byte
 	for i := 0; i < len(metafile); i++ {
 		currentChunk[i%32] = metafile[i]
 		if (i+1)%32 == 0 {
-			df.MetaSliceByChunks = append(df.MetaSliceByChunks, currentChunk)
+			df.ChunksHashesSlice = append(df.ChunksHashesSlice, currentChunk)
+			df.ChunksHashesSet[currentChunk] = true
 			df.ChunksToDownload[currentChunk] = true
 		}
 	}
@@ -97,12 +139,16 @@ func (df *DownloadingFile) gotMetafile(hashValue [32]byte, metafile []byte) {
 	}
 
 	os.Mkdir(fileChunksPath, FileCommonMode)
+
+	// save metafile to disk:
+	metafileName := GetChunkFileName(df.MetaHash)
+	ioutil.WriteFile(filepath.Join(fileChunksPath, metafileName), metafile, FileCommonMode)
 }
 
 func (df *DownloadingFile) finishDownloading() {
 	log.Info("file " + df.Name + " is downloaded, composing it..")
-	fileBytes := make([]byte, 0, len(df.MetaSliceByChunks)*FileChunkSize)
-	for _, chunkHash := range df.MetaSliceByChunks {
+	fileBytes := make([]byte, 0, len(df.ChunksHashesSlice)*FileChunkSize)
+	for _, chunkHash := range df.ChunksHashesSlice {
 		chunkFileName := GetChunkFileName(chunkHash)
 		chunkPath := filepath.Join(DownloadsChunksPath, df.Name, chunkFileName)
 		if _, err := os.Stat(chunkPath); os.IsNotExist(err) {
@@ -112,6 +158,7 @@ func (df *DownloadingFile) finishDownloading() {
 
 		chunkBytes, err := ioutil.ReadFile(chunkPath)
 		if CheckErr(err) {
+			log.Error("error, when reading chunk from file")
 			return
 		}
 
@@ -125,8 +172,7 @@ func (df *DownloadingFile) finishDownloading() {
 	}
 	ioutil.WriteFile(filepath.Join(DownloadsPath, df.Name), fileBytes, FileCommonMode)
 
-	log.Debug("cleaning the temporary storage..")
-	os.RemoveAll(filepath.Join(DownloadsChunksPath, df.Name))
+	log.Debug("file composed & everything is ok, now providing chunks only for sharing")
 }
 
 func (df *DownloadingFile) getDataRequest() []byte {
