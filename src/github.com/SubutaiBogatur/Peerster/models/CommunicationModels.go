@@ -22,6 +22,8 @@ type GossipPacket struct {
 	DataReply     *DataReply
 	SearchRequest *SearchRequest
 	SearchReply   *SearchReply
+	TxPublish     *TxPublish
+	BlockPublish  *BlockPublish
 }
 
 type SimpleMessage struct {
@@ -89,6 +91,28 @@ type SearchResult struct {
 	ChunkCount   uint64
 }
 
+type TxPublish struct {
+	File     File
+	HopLimit uint32
+}
+
+type BlockPublish struct {
+	Block    Block
+	HopLimit uint32
+}
+
+type File struct {
+	Name         string
+	Size         int64
+	MetafileHash []byte
+}
+
+type Block struct {
+	PrevHash     [32]byte
+	Nonce        [32]byte
+	Transactions []TxPublish
+}
+
 type ClientMessage struct {
 	Rumor      *ClientRumorMessage
 	RouteRumor *ClientRouteRumorMessage
@@ -120,8 +144,8 @@ type ClientToDownloadMessage struct {
 }
 
 type ClientToSearchMessage struct {
-	Keywords            []string
-	Budget              uint64 // 0 = no budget provided
+	Keywords []string
+	Budget   uint64 // 0 = no budget provided
 }
 
 func (rmsg *RumorMessage) String() string {
