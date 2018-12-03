@@ -924,8 +924,7 @@ func (g *Gossiper) startFileSearchingGoroutine(keywords []string, budget int, ch
 
 	ticker := time.NewTicker(1)
 
-	// do-while simulation
-	for true {
+	for {
 		select {
 		case <-ticker.C:
 			if budget > maxAllowedBudget {
@@ -955,7 +954,6 @@ func (g *Gossiper) startFileSearchingGoroutine(keywords []string, budget int, ch
 				// then we can start downloading from this peer. I believe, that it is ok with task we're required to implement
 				if uint64(len(res.ChunkMap)) == res.ChunkCount {
 					// this is a full match
-					g.l.Debug("got a full match from " + dataReplyPacket.Origin + " on " + res.FileName + ", has " + strconv.Itoa(g.currentSearchRequest.GetFullMatchesNumber()) + " matches now (before adding new)")
 					metahash, err := GetTypeStrictHash(res.MetafileHash)
 					if err != nil {
 						g.l.Warn("cannot convert metafile hash...")
@@ -964,6 +962,7 @@ func (g *Gossiper) startFileSearchingGoroutine(keywords []string, budget int, ch
 
 					fullMatch := FullSearchMatch{Origin: dataReplyPacket.Origin, Filename: res.FileName, MetafileHash: metahash}
 					g.currentSearchRequest.AddFullMatch(&fullMatch)
+					g.l.Debug("got a full match from " + dataReplyPacket.Origin + " on " + res.FileName + ", has " + strconv.Itoa(g.currentSearchRequest.GetFullMatchesNumber()) + " matches now")
 				} else {
 					g.l.Debug("got a partial match from " + dataReplyPacket.Origin + " on " + res.FileName + ", skipping it, see code for comment on why so is done")
 				}

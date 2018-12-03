@@ -10,3 +10,5 @@ Has following features:
 * Spreading gossips to everyone through rumor-mongering & anti-entropy protocols
 * Sending private messages through next-hop map
 * Sending files (by dividing them in chunks and sending chunks via udp)
+* Searching files
+* Blockchain

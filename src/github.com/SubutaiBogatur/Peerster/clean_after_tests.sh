@@ -1,3 +1,10 @@
+#!/bin/bash
 rm *.out
-rm _Downloads/*1M_file.txt
-rm -rf _Downloads/chunks
+rm Peerster
+rm client/client
+
+cd _Downloads
+rm *1M_file.txt
+rm -rf chunks
+rm *.jpg
+cd ..
