@@ -80,7 +80,7 @@ func SendToDownloadMessageToLocalPort(name string, hashString string, destinatio
 
 func SendToSearchMessaageToLocalPort(keywords []string, budget uint64, port int, logger *log.Entry) {
 	logDebug("sending to-search msg to local client port", logger)
-	tsmsg := &ClientToSearchMessage{Keywords:keywords, Budget:budget, DownloadAfterSearch:true} // should start downloading from cli
+	tsmsg := &ClientToSearchMessage{Keywords:keywords, Budget:budget}
 	csmsg := &ClientMessage{ToSearch: tsmsg}
 	sendMessageToLocalPort(csmsg, port, logger)
 }

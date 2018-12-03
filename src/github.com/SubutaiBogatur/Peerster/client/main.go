@@ -30,7 +30,7 @@ func main() {
 		SendPrivateMessageToLocalPort(*msg, *dest, *UIPort, logger)
 	} else if *msg != "" {
 		SendRumorMessageToLocalPort(*msg, *UIPort, logger)
-	} else if *dest != "" && *request != "" && *file != "" {
+	} else if *request != "" && *file != "" {
 		SendToDownloadMessageToLocalPort(*file, *request, *dest, *UIPort, logger)
 	} else if *file != "" {
 		SendToShareMessageToLocalPort(*file, *UIPort, logger)

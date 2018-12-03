@@ -57,22 +57,6 @@ var (
 	downloadingFilesChannelsMux sync.Mutex
 )
 
-const (
-	RumorTimeout              = time.Second
-	AntiEntropyTimeout        = time.Second
-	FileDownloadReplyTimeout  = 1 * time.Second
-	FileDownloadTimeoutsLimit = 5
-
-	DefaultStartingSearchBudget = 2
-	DefaultMaxSearchBudget      = 32
-	FileSearchReplyTimeout      = 5 * time.Second
-	FullMatchesThreshold        = 2
-
-	RecentSearchRequestTimeout = 500 * time.Millisecond // 1/2 second
-
-	PrivateMessageHopLimit = 5
-)
-
 type Gossiper struct {
 	name atomic.Value // name can be changed by webserver and is accessed from message-processor, thus using atomic string
 
@@ -277,7 +261,7 @@ func (g *Gossiper) sendPacketWithNextHop(origin string, gp *GossipPacket) {
 	g.nextHopMux.Lock()
 	defer g.nextHopMux.Unlock()
 	if g.nextHop[origin] != nil {
-		g.l.Debug("sending packet with next hop to " + origin + ", next hop appeared to be: " + g.nextHop[origin].String() + " whole map is ", g.nextHop)
+		g.l.Debug("sending packet with next hop to "+origin+", next hop appeared to be: "+g.nextHop[origin].String()+" whole map is ", g.nextHop)
 		agp := &AddressedGossipPacket{Address: g.nextHop[origin], Packet: gp}
 		peerMessagesToSend <- agp
 	} else {
@@ -425,7 +409,7 @@ func (g *Gossiper) processClientMessage(cmsg *ClientMessage) {
 		g.processRumorMessage(rmsg)
 	} else if cmsg.Private != nil {
 		g.l.Info("got client private message")
-		pmsg := &PrivateMessage{Origin: gossiperName, ID: 0, Text: cmsg.Private.Text, Destination: cmsg.Private.Destination, HopLimit: PrivateMessageHopLimit}
+		pmsg := &PrivateMessage{Origin: gossiperName, ID: 0, Text: cmsg.Private.Text, Destination: cmsg.Private.Destination, HopLimit: DefaultHopLimit}
 		g.processPrivateMessage(pmsg)
 	} else if cmsg.ToShare != nil {
 		g.l.Info("got client to share message")
@@ -588,7 +572,7 @@ func (g *Gossiper) processDataRequest(drqmsg *DataRequest) {
 		}
 
 		g.l.Info("answered to data request from " + drqmsg.Origin + " with chunk/metafile")
-		drpmsg := &DataReply{HashValue: drqmsg.HashValue, Origin: gossiperName, Destination: drqmsg.Origin, HopLimit: PrivateMessageHopLimit, Data: requestedData}
+		drpmsg := &DataReply{HashValue: drqmsg.HashValue, Origin: gossiperName, Destination: drqmsg.Origin, HopLimit: DefaultHopLimit, Data: requestedData}
 		g.sendPacketWithNextHop(drpmsg.Destination, &GossipPacket{DataReply: drpmsg})
 		return
 	}
@@ -639,6 +623,7 @@ func (g *Gossiper) processAddressedSearchRequest(srqmsg *SearchRequest, address 
 	_, recentlyAnswered := g.recentSearchRequests[setkey]
 	if recentlyAnswered {
 		g.l.Warn("this search request was already recently answered, dropping it...")
+		g.recentSearchRequestsMux.Unlock()
 		return
 	}
 
@@ -682,6 +667,13 @@ func (g *Gossiper) processAddressedSearchReply(srpmsg *SearchReply, address *UDP
 
 func (g *Gossiper) processClientDataRequest(cdrqmsg *ClientToDownloadMessage) {
 	origin := cdrqmsg.Destination
+
+	if cdrqmsg.Destination == "" {
+		g.l.Info("got client to-download request with no dest specified, so checking for such hash in files, downloaded during previous search-request..")
+		g.currentSearchRequest.DownloadFileByHash(cdrqmsg.HashValue, cdrqmsg.Name)
+		return
+	}
+
 	downloadingFilesChannelsMux.Lock() // if locking later, rc is introduced
 	if !g.downloadingFilesManager.StartDownloadingFromOrigin(origin, cdrqmsg.Name, cdrqmsg.HashValue) {
 		g.l.Error("cannot start downloading, because downloading from this peer is already in progress")
@@ -697,7 +689,7 @@ func (g *Gossiper) processClientDataRequest(cdrqmsg *ClientToDownloadMessage) {
 
 	// send first data request and start file-downloading goroutine
 	g.l.Info("starting file-downloading goroutine & requesting metafile from " + origin + " for file " + cdrqmsg.Name)
-	drqmsg := &DataRequest{Destination: origin, HopLimit: PrivateMessageHopLimit, HashValue: cdrqmsg.HashValue[:], Origin: g.name.Load().(string)}
+	drqmsg := &DataRequest{Destination: origin, HopLimit: DefaultHopLimit, HashValue: cdrqmsg.HashValue[:], Origin: g.name.Load().(string)}
 	gp := &GossipPacket{DataRequest: drqmsg}
 	g.sendPacketWithNextHop(origin, gp)
 
@@ -715,7 +707,7 @@ func (g *Gossiper) processClientSearchRequest(csrqmsg *ClientToSearchMessage) {
 	ch := make(chan *SearchReply)
 	g.currentSearchRequest = InitCurrentSearchRequest(ch, g.clientAddress.Port, g.l)
 
-	go g.startFileSearchingGoroutine(csrqmsg.Keywords, int(csrqmsg.Budget), ch, csrqmsg.DownloadAfterSearch)
+	go g.startFileSearchingGoroutine(csrqmsg.Keywords, int(csrqmsg.Budget), ch)
 }
 
 // -------------------------------------------
@@ -766,7 +758,7 @@ func (g *Gossiper) processSearchRequest(srqmsg *SearchRequest) {
 		matchedFiles := append(sharedMatchedFiles, downloadedMatchedFiles...)
 		if len(matchedFiles) > 0 {
 			g.l.Info("got some matches on " + gossiperName + " for search-request: " + strings.Join(srqmsg.Keywords, ","))
-			gp := &GossipPacket{SearchReply:&SearchReply{Origin:gossiperName, Destination:srqmsg.Origin, HopLimit:PrivateMessageHopLimit, Results:matchedFiles}}
+			gp := &GossipPacket{SearchReply: &SearchReply{Origin: gossiperName, Destination: srqmsg.Origin, HopLimit: DefaultHopLimit, Results: matchedFiles}}
 			g.sendPacketWithNextHop(srqmsg.Origin, gp)
 		} else {
 			g.l.Info("got no matches on " + gossiperName + " for search-request: " + strings.Join(srqmsg.Keywords, ","))
@@ -877,7 +869,7 @@ func (g *Gossiper) startFileDownloadingGoroutine(origin string, latestRequestedH
 
 			// resend message we didn't receive reply for
 			g.l.Info("resending msg because of timeout: DataRequest with hash: " + hex.EncodeToString(latestRequestedHash))
-			dataRequest := &DataRequest{Destination: origin, HopLimit: PrivateMessageHopLimit, HashValue: latestRequestedHash, Origin: g.name.Load().(string)}
+			dataRequest := &DataRequest{Destination: origin, HopLimit: DefaultHopLimit, HashValue: latestRequestedHash, Origin: g.name.Load().(string)}
 			gp := &GossipPacket{DataRequest: dataRequest}
 			g.sendPacketWithNextHop(origin, gp)
 		case dataReplyPacket := <-ch:
@@ -886,7 +878,7 @@ func (g *Gossiper) startFileDownloadingGoroutine(origin string, latestRequestedH
 			isFinished := g.downloadingFilesManager.ProcessDataReply(origin, dataReplyPacket)
 			if isFinished == nil {
 				g.l.Error("an error occured when downloading from the peer, try to request the same chunk/metafile once again, hash is: " + hex.EncodeToString(latestRequestedHash))
-				dataRequest := &DataRequest{Destination: origin, HopLimit: PrivateMessageHopLimit, HashValue: latestRequestedHash, Origin: g.name.Load().(string)}
+				dataRequest := &DataRequest{Destination: origin, HopLimit: DefaultHopLimit, HashValue: latestRequestedHash, Origin: g.name.Load().(string)}
 				gp := &GossipPacket{DataRequest: dataRequest}
 				g.sendPacketWithNextHop(origin, gp)
 				downloadingFilesChannelsMux.Unlock()
@@ -913,7 +905,7 @@ func (g *Gossiper) startFileDownloadingGoroutine(origin string, latestRequestedH
 
 			g.l.Debug("now requesting " + hex.EncodeToString(dataRequestHash))
 			latestRequestedHash = dataRequestHash
-			dataRequest := &DataRequest{Destination: origin, HopLimit: PrivateMessageHopLimit, HashValue: dataRequestHash, Origin: g.name.Load().(string)}
+			dataRequest := &DataRequest{Destination: origin, HopLimit: DefaultHopLimit, HashValue: dataRequestHash, Origin: g.name.Load().(string)}
 			gp := &GossipPacket{DataRequest: dataRequest}
 			g.sendPacketWithNextHop(origin, gp)
 		}
@@ -921,10 +913,10 @@ func (g *Gossiper) startFileDownloadingGoroutine(origin string, latestRequestedH
 }
 
 // called only by the only file-searching goroutine:
-func (g *Gossiper) startFileSearchingGoroutine(keywords []string, budget int, ch chan *SearchReply, downloadAfterSearch bool) {
-	maxAllowedBudget := DefaultMaxSearchBudget
+func (g *Gossiper) startFileSearchingGoroutine(keywords []string, budget int, ch chan *SearchReply) {
+	maxAllowedBudget := FileSearchMaxBudget
 	if budget == 0 {
-		budget = DefaultStartingSearchBudget
+		budget = FileSearchStartBudget
 	} else {
 		// budget is specified explicitly, so small hack to make the request only once
 		maxAllowedBudget = budget
@@ -937,7 +929,7 @@ func (g *Gossiper) startFileSearchingGoroutine(keywords []string, budget int, ch
 		select {
 		case <-ticker.C:
 			if budget > maxAllowedBudget {
-				if budget > maxAllowedBudget + 1 {
+				if budget > maxAllowedBudget+1 {
 					g.l.Warn("reached max budget & didn't get enough full matches, leaving the function, defeated...")
 					g.currentSearchRequest.Shutdown()
 					return
@@ -950,7 +942,7 @@ func (g *Gossiper) startFileSearchingGoroutine(keywords []string, budget int, ch
 			}
 
 			// send search request:
-			g.l.Info("sending search request for keywords: " + strings.Join(keywords,",") + " for budget: " + strconv.Itoa(budget))
+			g.l.Info("sending search request for keywords: " + strings.Join(keywords, ",") + " for budget: " + strconv.Itoa(budget))
 			searchRequest := &SearchRequest{Budget: uint64(budget), Keywords: keywords, Origin: g.name.Load().(string)}
 			g.processSearchRequest(searchRequest)
 
@@ -970,19 +962,23 @@ func (g *Gossiper) startFileSearchingGoroutine(keywords []string, budget int, ch
 						continue
 					}
 
-					fullMatch := FullSearchMatch{Origin:dataReplyPacket.Origin, Filename:res.FileName, MetafileHash:metahash}
+					fullMatch := FullSearchMatch{Origin: dataReplyPacket.Origin, Filename: res.FileName, MetafileHash: metahash}
 					g.currentSearchRequest.AddFullMatch(&fullMatch)
 				} else {
 					g.l.Debug("got a partial match from " + dataReplyPacket.Origin + " on " + res.FileName + ", skipping it, see code for comment on why so is done")
 				}
+
+				// also do pretty-print:
+				fmt.Println("FOUND match " + res.FileName + " at " + dataReplyPacket.Origin +
+					" metafile=" + hex.EncodeToString(res.MetafileHash) +
+					" chunks=" + strings.Trim(strings.Join(strings.Fields(fmt.Sprint(res.ChunkMap)), ","), "[]"))
 			}
 
-			if g.currentSearchRequest.GetFullMatchesNumber() >= FullMatchesThreshold {
-				g.l.Info("reached threshold for search request: " + strings.Join(keywords,",") + ", stopping the search-request goroutine")
-				if downloadAfterSearch {
-					g.l.Info("initiating download process..")
-					g.currentSearchRequest.DownloadAnyFile(g.name.Load().(string))
-				}
+			if g.currentSearchRequest.GetFullMatchesNumber() >= FileSearchFullMatchesThreshold {
+				g.l.Info("reached threshold for search request: " + strings.Join(keywords, ",") + ", stopping the search-request goroutine")
+				//g.l.Info("initiating download process..")
+				//g.currentSearchRequest.DownloadAnyFile(g.name.Load().(string))
+				fmt.Println("SEARCH FINISHED")
 				g.currentSearchRequest.Shutdown()
 				return
 			}

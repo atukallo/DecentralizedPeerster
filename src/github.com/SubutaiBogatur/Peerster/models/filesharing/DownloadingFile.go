@@ -179,7 +179,6 @@ func (df *downloadingFile) finishDownloading() {
 		fileBytes = append(fileBytes, chunkBytes...)
 	}
 
-	// todo: file reconstructed
 	log.Info("file composed and being written to persistent memory")
 	if _, err := os.Stat(filepath.Join(DownloadsPath, df.Name)); !os.IsNotExist(err) {
 		log.Warn("such file alreaqy exists in downloads dir, deleting old file, sorry..")
@@ -188,6 +187,7 @@ func (df *downloadingFile) finishDownloading() {
 	ioutil.WriteFile(filepath.Join(DownloadsPath, df.Name), fileBytes, FileCommonMode)
 
 	log.Debug("file composed & everything is ok, now providing chunks only for sharing")
+	fmt.Println("RECONSTRUCTED file " + df.Name)
 }
 
 func (df *downloadingFile) getDataRequest() []byte {

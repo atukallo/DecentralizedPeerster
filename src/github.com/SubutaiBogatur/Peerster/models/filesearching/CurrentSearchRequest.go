@@ -62,21 +62,23 @@ func (csr *CurrentSearchRequest) GetFullMatchesNumber() int {
 	return len(csr.fullMatches)
 }
 
-func (csr *CurrentSearchRequest) DownloadAnyFile(gossiperName string) {
+func (csr *CurrentSearchRequest) DownloadFileByHash(metahash [32]byte, downloadFilename string) {
 	csr.mux.Lock()
 	defer csr.mux.Unlock()
 
 	for _, match := range csr.fullMatches {
-		csr.l.Info("good, initiating any downloading of " + match.Filename + " from " + match.Origin)
-		downloadedFilename := gossiperName + "-" + match.Filename // name is edited for easier testing on same machine
-		SendToDownloadMessageToLocalPort(downloadedFilename, hex.EncodeToString(match.MetafileHash[:]), match.Origin, csr.gossiperUIPort, csr.l)
-		return
+		if match.MetafileHash == metahash {
+			// great, found full match with required file
+			csr.l.Info("good, initiating specific downloading of " + downloadFilename + " from " + match.Origin + " for hash " + hex.EncodeToString(metahash[:]))
+			SendToDownloadMessageToLocalPort(downloadFilename, hex.EncodeToString(match.MetafileHash[:]), match.Origin, csr.gossiperUIPort, csr.l)
+			return
+		}
 	}
 
 	csr.l.Error("couldn't initiate any downloading because search request got no full matches")
 }
 
-func (csr *CurrentSearchRequest) DownloadSpecificFile(filename string, gossiperName string) {
+func (csr *CurrentSearchRequest) DownloadFileByName(filename string, downloadFilename string) {
 	csr.mux.Lock()
 	defer csr.mux.Unlock()
 
@@ -84,8 +86,7 @@ func (csr *CurrentSearchRequest) DownloadSpecificFile(filename string, gossiperN
 		if match.Filename == filename {
 			// great, found full match with required file
 			csr.l.Info("good, initiating specific downloading of " + filename + " from " + match.Origin)
-			downloadedFilename := gossiperName + "-" + match.Filename // name is edited for easier testing on same machine
-			SendToDownloadMessageToLocalPort(downloadedFilename, hex.EncodeToString(match.MetafileHash[:]), match.Origin, csr.gossiperUIPort, csr.l)
+			SendToDownloadMessageToLocalPort(downloadFilename, hex.EncodeToString(match.MetafileHash[:]), match.Origin, csr.gossiperUIPort, csr.l)
 			return
 		}
 	}

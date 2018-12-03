@@ -122,7 +122,6 @@ type ClientToDownloadMessage struct {
 type ClientToSearchMessage struct {
 	Keywords            []string
 	Budget              uint64 // 0 = no budget provided
-	DownloadAfterSearch bool
 }
 
 func (rmsg *RumorMessage) String() string {

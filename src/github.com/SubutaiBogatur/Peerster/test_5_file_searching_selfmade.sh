@@ -38,9 +38,10 @@ msg_tr_1="I_am_top_right_!"
 msg_bl_1="I_am_bottom_left_!"
 msg_br_1="I_am_bottom_right_!"
 
-sharedFileName="1M_file.txt"
+sharedFileName="pic1.jpg"
 trDownloadedFileName="tr-downloaded-$sharedFileName"
 blDownloadedFileName="bl-downloaded-$sharedFileName"
+brSearchedDownloadedFileName="br-searched-downloaded-$sharedFileName"
 
 rm *.out
 rm Peerster
@@ -50,11 +51,11 @@ rm client
 go build
 cd ..
 
-./Peerster -name=tl -peers="$tmAddr,$blAddr" -UIPort="$tlUIPort" -gossipAddr="$tlAddr" -rtimer=100 -noWebserver=false -noAntiEntropy=true > TL.out &
-./Peerster -name=tr -peers="$tmAddr,$brAddr" -UIPort="$trUIPort" -gossipAddr="$trAddr" -rtimer=100 -noWebserver=true  -noAntiEntropy=true > TR.out &
-./Peerster -name=bl -peers="$tlAddr,$brAddr" -UIPort="$blUIPort" -gossipAddr="$blAddr" -rtimer=100 -noWebserver=true  -noAntiEntropy=true > BL.out &
-./Peerster -name=br -peers="$blAddr,$trAddr" -UIPort="$brUIPort" -gossipAddr="$brAddr" -rtimer=100 -noWebserver=true  -noAntiEntropy=true > BR.out &
-./Peerster -name=tm -peers="$tlAddr,$trAddr" -UIPort="$tmUIPort" -gossipAddr="$tmAddr" -rtimer=100 -noWebserver=true  -noAntiEntropy=true > TM.out &
+./Peerster -name=tl -peers="$tmAddr,$blAddr" -UIPort="$tlUIPort" -gossipAddr="$tlAddr" -rtimer=10000 -noWebserver=false -noAntiEntropy=true > TL.out &
+./Peerster -name=tr -peers="$tmAddr,$brAddr" -UIPort="$trUIPort" -gossipAddr="$trAddr" -rtimer=10000 -noWebserver=true  -noAntiEntropy=true > TR.out &
+./Peerster -name=bl -peers="$tlAddr,$brAddr" -UIPort="$blUIPort" -gossipAddr="$blAddr" -rtimer=10000 -noWebserver=true  -noAntiEntropy=true > BL.out &
+./Peerster -name=br -peers="$blAddr,$trAddr" -UIPort="$brUIPort" -gossipAddr="$brAddr" -rtimer=10000 -noWebserver=true  -noAntiEntropy=true > BR.out &
+./Peerster -name=tm -peers="$tlAddr,$trAddr" -UIPort="$tmUIPort" -gossipAddr="$tmAddr" -rtimer=10000 -noWebserver=true  -noAntiEntropy=true > TM.out &
 
 # let the gossipers initialize
 sleep 1
@@ -77,13 +78,15 @@ sleep 1
 
 # prepare file to send:
 cd _SharedFiles
-rm "$sharedFileName"
-dd if=/dev/zero of="$sharedFileName"  bs=1010K  count=1 # copy a lot of nulls to file (a bit smaller, than 1M for technical reasons, haha)
-echo "ohohohohohohohohohoh" >> "$sharedFileName"
+# sending pic1.jpg, which is ready
+#rm "$sharedFileName"
+#dd if=/dev/zero of="$sharedFileName"  bs=1010K  count=1 # copy a lot of nulls to file (a bit smaller, than 1M for technical reasons, haha)
+#echo "ohohohohohohohohohoh" >> "$sharedFileName"
 cd ..
-rm _Downloads/"*$sharedFileName"
-rm _Downloads/"$blDownloadedFileName"
-rm _Downloads/"$trDownloadedFileName"
+
+cd _Downloads
+rm "*.jpg"
+cd ..
 
 # share big file on "tl":
 ./client/client -UIPort="$tlUIPort" -file="$sharedFileName"
@@ -126,13 +129,15 @@ sleep 1
 echo "Okay, great, first part of tests done, files transfered succesfully to other nodes, now search will be tested..."
 sleep 1
 
-./client/client -UIPort="$brUIPort" -keywords="1M"
+./client/client -UIPort="$brUIPort" -keywords="pic"
+sleep 1
+echo "Okay, searching should have been finished on br"
 
-sleep 2
-echo "Okay, searching & downloading should have been finished on br. It downloaded either from bl or tr"
+./client/client -UIPort="$brUIPort" -file="$brSearchedDownloadedFileName" -request="$fileHash"
+sleep 1
+echo "Okay, downloading should have been finished on br"
 
-if [ -z "$(diff _SharedFiles/$sharedFileName _Downloads/br-$blDownloadedFileName 2>&1)" ] || [ -z "$(diff _SharedFiles/$sharedFileName _Downloads/br-$blDownloadedFileName 2>&1)" ]; then # err moved to out
-    # if output of one of two commands is empty:
+if [ -z "$(diff _SharedFiles/$sharedFileName _Downloads/$brSearchedDownloadedFileName 2>&1)" ]; then # err moved to out
     echo -e "${GREEN}***PASSED***${NC}"
     echo "File $sharedFileName succesfully transfered from (tr|bl) to br and saved at br after searching, my congratulations, officer"
     echo -e "${GREEN}***MY CONGRATULATIONS SIR***${NC}"
