@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"github.com/SubutaiBogatur/Peerster/models"
 	log "github.com/sirupsen/logrus"
+	"strings"
 )
 
 // returns (err != nil)
@@ -45,6 +46,5 @@ func GetMetafileName(hashValue [32]byte) string {
 }
 
 func GetRecentSearchRequestSetKey(origin string, keywords []string) string {
-	// todo
-	return "abc"
+	return origin + "-" + strings.Join(keywords, ",")
 }

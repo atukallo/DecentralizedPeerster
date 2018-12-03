@@ -154,7 +154,7 @@ func (df *downloadingFile) gotMetafile(hashValue [32]byte, metafile []byte) bool
 	os.Mkdir(fileChunksPath, FileCommonMode)
 
 	// save metafile to disk:
-	metafileName := GetChunkFileName(df.MetaHash)
+	metafileName := GetMetafileName(df.MetaHash)
 	ioutil.WriteFile(filepath.Join(fileChunksPath, metafileName), metafile, FileCommonMode)
 	return true
 }
@@ -179,6 +179,7 @@ func (df *downloadingFile) finishDownloading() {
 		fileBytes = append(fileBytes, chunkBytes...)
 	}
 
+	// todo: file reconstructed
 	log.Info("file composed and being written to persistent memory")
 	if _, err := os.Stat(filepath.Join(DownloadsPath, df.Name)); !os.IsNotExist(err) {
 		log.Warn("such file alreaqy exists in downloads dir, deleting old file, sorry..")

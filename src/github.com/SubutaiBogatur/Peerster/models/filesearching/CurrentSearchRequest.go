@@ -44,6 +44,14 @@ func (csr *CurrentSearchRequest) AddFullMatch(match *FullSearchMatch) {
 	csr.mux.Lock()
 	defer csr.mux.Unlock()
 
+	// O(n), but, once again, not the worst problem
+	for _, otherMatch := range csr.fullMatches {
+		if otherMatch.Origin == match.Origin && otherMatch.MetafileHash == match.MetafileHash {
+			csr.l.Warn("got match, but already have this match, so not really counting it")
+			return
+		}
+	}
+	// else if truly new
 	csr.fullMatches = append(csr.fullMatches, match)
 }
 
