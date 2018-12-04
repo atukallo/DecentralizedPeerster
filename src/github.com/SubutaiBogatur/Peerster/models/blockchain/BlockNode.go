@@ -21,6 +21,22 @@ func InitFakeBlockNode() *blockNode {
 	return &blockNode{parent: nil, depth: 0, block: nil, txSet: nil}
 }
 
+func (bn *blockNode) isFake() bool {
+	return bn.depth == 0 && bn.parent == nil
+}
+
+func (bn *blockNode) containsTransaction(tx *TxPublish) bool {
+	return bn.txSet.contains(tx)
+}
+
+func (bn *blockNode) getBlockHash() [32]byte {
+	return bn.block.Hash()
+}
+
+func (bn *blockNode) String() string {
+	return bn.block.String()
+}
+
 // returns correct answer only if answer exists, else not guaranteed, but not fails
 func getLSA(a *blockNode, b *blockNode) *blockNode {
 	if b.depth > a.depth {
@@ -41,8 +57,4 @@ func getLSA(a *blockNode, b *blockNode) *blockNode {
 	}
 
 	return a
-}
-
-func (bn *blockNode) containsTransaction(tx *TxPublish) bool {
-	return bn.txSet.contains(tx)
 }

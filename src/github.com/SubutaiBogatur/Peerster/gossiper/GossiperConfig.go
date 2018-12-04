@@ -17,4 +17,7 @@ const (
 	RecentSearchRequestTimeout = 500 * time.Millisecond // don't answer to same search-requests for some time
 
 	DefaultHopLimit = 5 // used eg for private messages, search replies, data replies, etc..
+
+	BlockhainBitsForGoodBlock = 16
+	BlockchainNoTxTimeout     = 2 * time.Second
 )
