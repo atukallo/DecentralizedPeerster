@@ -3,7 +3,7 @@ package blockchain
 import (
 	"encoding/hex"
 	"fmt"
-	. "github.com/SubutaiBogatur/Peerster/gossiper"
+	. "github.com/SubutaiBogatur/Peerster/config"
 	. "github.com/SubutaiBogatur/Peerster/models"
 	log "github.com/sirupsen/logrus"
 	"math/rand"
@@ -25,15 +25,13 @@ func InitBlockchainManager(l *log.Entry) *BlockchainManager {
 	bm := &BlockchainManager{l: l, blocks: make(map[[32]byte]*blockNode), pendingTx: InitEmpty()}
 
 	bm.tail = InitFakeBlockNode()
-
-	var typedHashValue [32]byte // just 32 type-strict zeroes
-	bm.blocks[typedHashValue] = bm.tail
+	bm.blocks[bm.tail.getBlockHash()] = bm.tail // a bit dangerous, because real hash is not zeroes
 
 	return bm
 }
 
 // returns true if new & correct block
-func (bm *BlockchainManager) addBlock(block *Block) bool {
+func (bm *BlockchainManager) AddBlock(block *Block) bool {
 	// 1) check if new
 	// 2) check if parent is known & block is correct (Proof-of-Work=POW)
 	// 3) append to parent with checking:
@@ -60,11 +58,12 @@ func (bm *BlockchainManager) addBlock(block *Block) bool {
 	}
 
 	// so, is good and is new, let's append to the tree
-	if block.PrevHash == bm.tail.block.Hash() {
+	if block.PrevHash == bm.tail.getBlockHash() {
 		bm.l.Info("block prolongs longest chain, good, block: " + block.String())
 		bm.tail = InitBlockNode(bm.tail, block)
 		bm.blocks[block.Hash()] = bm.tail
 		bm.pendingTx.subtract(bm.tail.txSet)
+		bm.printLongestChain()
 		return true
 	}
 
@@ -73,28 +72,34 @@ func (bm *BlockchainManager) addBlock(block *Block) bool {
 	if parentNode.depth < bm.tail.depth {
 		bm.l.Info("block prolongs short chain, block: " + block.String())
 		bm.blocks[block.Hash()] = InitBlockNode(parentNode, block)
+		fmt.Println("FORK-SHORTER " + block.String())
 		return true
 	}
 
+	bm.l.Info("block prolongs short chain, which become longest, reapplying history..., block: " + block.String())
 	// now the most interesting case
 	lsa := getLSA(bm.tail, parentNode)
 	// roll-back history
+	blocksUndone := 0
 	for curBlock := bm.tail; curBlock != lsa; curBlock = curBlock.parent {
 		bm.pendingTx.union(curBlock.txSet)
+		blocksUndone++
 	}
+	fmt.Println("FORK-LONGER rewind " + strconv.Itoa(blocksUndone) + " blocks")
 
-	newBlock := InitBlockNode(parentNode, block)
-	bm.blocks[block.Hash()] = newBlock
+	bm.tail = InitBlockNode(parentNode, block)
+	bm.blocks[block.Hash()] = bm.tail
 	// apply new history
-	for curBlock := newBlock; curBlock != lsa; curBlock = curBlock.parent {
+	for curBlock := bm.tail; curBlock != lsa; curBlock = curBlock.parent {
 		bm.pendingTx.subtract(curBlock.txSet)
 	}
+	bm.printLongestChain()
 
 	return true
 }
 
 // returns true if new & correct transaction
-func (bm *BlockchainManager) addTransaction(tx *TxPublish) bool {
+func (bm *BlockchainManager) AddTransaction(tx *TxPublish) bool {
 	// check if new & valid (ie such name not taken yet)
 	bm.m.Lock()
 	defer bm.m.Unlock()
@@ -124,24 +129,26 @@ func (bm *BlockchainManager) addTransaction(tx *TxPublish) bool {
 
 	// pending & history checked both for correctness of the transaction and also for its newness
 	bm.pendingTx.add(tx)
+	bm.l.Info("transaction added to pending set")
 	return true
 
 }
 
 // is called from distinct thread
 // tries to mine new block. When succeeds, adds it to the blockchain and returns (block, time cpu was actually mining)
-func (bm *BlockchainManager) doMining() (*Block, Duration) {
+func (bm *BlockchainManager) DoMining() (*Block, Duration) {
 	failedAttempts := 0
 	sleepTimes := 0
 	start := Now()
 
 	// mining is done very often, so not taking lock every time, but only when possibly good block found, when decide to finally check it
-	for true {
+	for {
 		if bm.pendingTx.isEmpty() {
 			sleepTimes++
 			Sleep(BlockchainNoTxTimeout)
 			continue
 		}
+
 
 		nonceSlice := make([]byte, 32)
 		rand.Read(nonceSlice)
@@ -161,8 +168,8 @@ func (bm *BlockchainManager) doMining() (*Block, Duration) {
 		// check once again atomically, that everything is good
 		newBlock.Transactions = bm.pendingTx.getSliceCopy()
 		newBlock.PrevHash = bm.tail.getBlockHash()
-		if !newBlock.IsGood() {
-			bm.l.Warn("very rare thing happened: block was good before taking locks, and now is bad..")
+		if !newBlock.IsGood() || bm.pendingTx.isEmpty() {
+			bm.l.Warn("very rare thing happened: block was good before taking locks, and now is bad.. (or maybe tx is empty)")
 			failedAttempts++
 			bm.m.Unlock()
 			continue
@@ -171,16 +178,37 @@ func (bm *BlockchainManager) doMining() (*Block, Duration) {
 		// block is truly good
 		timeUsed := Since(start) - Duration(sleepTimes)*BlockchainNoTxTimeout
 		bm.l.Info("new block mined, spent " + strconv.Itoa(failedAttempts) + " attempts and " + fmt.Sprint(timeUsed.Seconds()) + " seconds, hash is: " + newBlock.String())
+		fmt.Println("FOUND-BLOCK " + newBlock.String())
 
 		// adding new block to blockchain
 		bm.tail = InitBlockNode(bm.tail, &newBlock)
 		bm.blocks[newBlock.Hash()] = bm.tail
 		bm.pendingTx.clear()
 		bm.l.Info("added new block to blockhain, now biggest-chain-depth is: " + fmt.Sprint(bm.tail.depth))
+		bm.printLongestChain()
 		bm.m.Unlock()
 
 		return &newBlock, timeUsed
 	}
 
 	return nil, 0 // cannot happen
+}
+
+// call after tail is updated
+func (bm *BlockchainManager) printLongestChain() {
+	str := "CHAIN"
+	for curBlock := bm.tail; !curBlock.isFake(); curBlock = curBlock.parent {
+		txs := ""
+		for i, tx := range curBlock.block.Transactions {
+			txs += tx.File.Name
+			if i != len(curBlock.block.Transactions)-1 {
+				txs += ","
+			}
+		}
+
+		str += " " + curBlock.String() + ":" + curBlock.parent.String() + ":" + txs
+	}
+
+	log.Debug(str)
+	fmt.Println(str)
 }

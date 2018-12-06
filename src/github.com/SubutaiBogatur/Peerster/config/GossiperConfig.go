@@ -1,4 +1,4 @@
-package gossiper
+package config
 
 import "time"
 
@@ -18,6 +18,8 @@ const (
 
 	DefaultHopLimit = 5 // used eg for private messages, search replies, data replies, etc..
 
-	BlockhainBitsForGoodBlock = 16
-	BlockchainNoTxTimeout     = 2 * time.Second
+	BlockhainBytesForGoodBlock     = 2 // 16 first bits want zeroes
+	BlockchainNoTxTimeout          = 2 * time.Second
+	BlockchainTxHopLimit           = 10
+	BlockchainBlockPublishHopLimit = 20
 )

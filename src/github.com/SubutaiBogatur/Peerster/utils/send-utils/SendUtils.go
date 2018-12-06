@@ -2,6 +2,7 @@ package send_utils
 
 import (
 	"encoding/hex"
+	. "github.com/SubutaiBogatur/Peerster/config"
 	. "github.com/SubutaiBogatur/Peerster/models"
 	. "github.com/SubutaiBogatur/Peerster/utils"
 	"github.com/dedis/protobuf"
@@ -80,7 +81,7 @@ func SendToDownloadMessageToLocalPort(name string, hashString string, destinatio
 
 func SendToSearchMessaageToLocalPort(keywords []string, budget uint64, port int, logger *log.Entry) {
 	logDebug("sending to-search msg to local client port", logger)
-	tsmsg := &ClientToSearchMessage{Keywords:keywords, Budget:budget}
+	tsmsg := &ClientToSearchMessage{Keywords: keywords, Budget: budget}
 	csmsg := &ClientMessage{ToSearch: tsmsg}
 	sendMessageToLocalPort(csmsg, port, logger)
 }
@@ -102,11 +103,11 @@ func sendMessageToLocalPort(cmsg *ClientMessage, port int, logger *log.Entry) {
 
 	connToGossiper, err := Dial("udp4", gossiperAddr.String())
 	if err != nil {
-		logError("error dialing: " + err.Error(), logger)
+		logError("error dialing: "+err.Error(), logger)
 	}
 
 	n, err := connToGossiper.Write(packetBytes)
 	if err != nil {
-		logError("error when writing to connection: " + err.Error() + " n is " + strconv.Itoa(n), logger)
+		logError("error when writing to connection: "+err.Error()+" n is "+strconv.Itoa(n), logger)
 	}
 }

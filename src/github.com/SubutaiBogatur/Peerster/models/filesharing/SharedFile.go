@@ -3,6 +3,7 @@ package filesharing
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	. "github.com/SubutaiBogatur/Peerster/config"
 	. "github.com/SubutaiBogatur/Peerster/models"
 	. "github.com/SubutaiBogatur/Peerster/utils"
 	log "github.com/sirupsen/logrus"

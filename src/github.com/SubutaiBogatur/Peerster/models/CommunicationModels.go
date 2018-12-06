@@ -5,7 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
-	"github.com/SubutaiBogatur/Peerster/gossiper"
+	. "github.com/SubutaiBogatur/Peerster/config"
 	"net"
 	"strconv"
 )
@@ -233,7 +233,7 @@ func (b *Block) Hash() (out [32]byte) {
 
 func (b *Block) IsGood() bool {
 	hash := b.Hash()
-	for i := 0; i < gossiper.BlockhainBitsForGoodBlock; i++ {
+	for i := 0; i < BlockhainBytesForGoodBlock; i++ {
 		if hash[i] != 0 {
 			return false
 		}
@@ -243,5 +243,6 @@ func (b *Block) IsGood() bool {
 }
 
 func (b *Block) String() string {
-	return hex.EncodeToString(b.Hash()[:])
+	h := b.Hash()
+	return hex.EncodeToString(h[:])
 }

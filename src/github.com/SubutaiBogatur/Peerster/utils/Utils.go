@@ -2,7 +2,6 @@ package utils
 
 import (
 	"encoding/hex"
-	"github.com/SubutaiBogatur/Peerster/models"
 	log "github.com/sirupsen/logrus"
 	"strings"
 )
@@ -27,7 +26,7 @@ func CheckError(err error, logger *log.Entry) bool {
 func GetTypeStrictHash(hashValue []byte) ([32]byte, error) {
 	var typedHashValue [32]byte
 	if len(hashValue) != 32 {
-		return typedHashValue, models.PeersterError{ErrorMsg: "invalid hash value passed, len is strange"}
+		return typedHashValue, PeersterError{ErrorMsg: "invalid hash value passed, len is strange"}
 	}
 
 	for i, b := range hashValue {

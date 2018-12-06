@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	. "github.com/SubutaiBogatur/Peerster/config"
 	. "github.com/SubutaiBogatur/Peerster/models"
 	. "github.com/SubutaiBogatur/Peerster/utils"
 	log "github.com/sirupsen/logrus"
@@ -78,7 +79,7 @@ func (df *downloadingFile) processDataReply(drpmsg *DataReply) *bool {
 	data := drpmsg.Data
 	if sha256.Sum256(data) != typedHashValue {
 		log.Error("got error hash-value pair!")
-		log.Debug("error details: hash is " + hex.EncodeToString(typedHashValue[:]) + " when data is: ", data)
+		log.Debug("error details: hash is "+hex.EncodeToString(typedHashValue[:])+" when data is: ", data)
 		return nil
 	}
 
@@ -211,7 +212,7 @@ func (df *downloadingFile) getSearchResults(keywords []string) []*SearchResult {
 			for i := 0; i < len(df.ChunksHashesSlice); i++ {
 				_, isNotDownloaded := df.ChunksToDownload[df.ChunksHashesSlice[i]]
 				if !isNotDownloaded {
-					downloadedChunksSlice = append(downloadedChunksSlice, uint64(i + 1))
+					downloadedChunksSlice = append(downloadedChunksSlice, uint64(i+1))
 				}
 			}
 			searchResult.ChunkMap = downloadedChunksSlice
@@ -222,4 +223,3 @@ func (df *downloadingFile) getSearchResults(keywords []string) []*SearchResult {
 
 	return searchResults
 }
-

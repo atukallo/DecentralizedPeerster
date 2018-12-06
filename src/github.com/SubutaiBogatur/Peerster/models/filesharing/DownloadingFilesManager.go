@@ -1,6 +1,7 @@
 package filesharing
 
 import (
+	. "github.com/SubutaiBogatur/Peerster/config"
 	. "github.com/SubutaiBogatur/Peerster/models"
 	. "github.com/SubutaiBogatur/Peerster/utils"
 	log "github.com/sirupsen/logrus"
@@ -31,7 +32,7 @@ func InitDownloadingFilesManager(l *log.Entry) *DownloadingFilesManager {
 
 	os.Mkdir(DownloadsChunksPath, FileCommonMode)
 
-	return &DownloadingFilesManager{downloadingFiles: make(map[string]*downloadingFile), downloadedFiles: make(map[[32]byte]*downloadingFile), l:l}
+	return &DownloadingFilesManager{downloadingFiles: make(map[string]*downloadingFile), downloadedFiles: make(map[[32]byte]*downloadingFile), l: l}
 }
 
 // kind of cas, returns true if really started downloading

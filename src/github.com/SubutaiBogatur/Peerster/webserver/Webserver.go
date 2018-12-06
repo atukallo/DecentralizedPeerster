@@ -2,6 +2,7 @@ package webserver
 
 import (
 	"encoding/json"
+	. "github.com/SubutaiBogatur/Peerster/config"
 	. "github.com/SubutaiBogatur/Peerster/gossiper"
 	. "github.com/SubutaiBogatur/Peerster/utils"
 	. "github.com/SubutaiBogatur/Peerster/utils/send-utils"
@@ -22,7 +23,7 @@ import (
 var (
 	g *Gossiper = nil // careful, it's shared by many threads
 
-	webserverPort         = 8080
+	webserverPort = 8080
 
 	logger = log.WithField("bin", "webs")
 )
@@ -100,7 +101,7 @@ func getMessages(w http.ResponseWriter, r *http.Request) {
 	rmsgs := g.GetRumorMessages()
 	pmsgs := g.GetPrivateMessages()
 
-	msgs := map[string]interface{}{"rumor-messages" : rmsgs, "private-messages" : pmsgs}
+	msgs := map[string]interface{}{"rumor-messages": rmsgs, "private-messages": pmsgs}
 	writeJsonResponse(w, msgs)
 }
 
@@ -125,13 +126,13 @@ func requestFile(w http.ResponseWriter, r *http.Request) {
 	// get name
 	filenumber := 0
 	for i := 1; ; i++ {
-		if _, err := os.Stat(filepath.Join(DownloadsPath, dest + "-" + strconv.Itoa(i))); os.IsNotExist(err) {
+		if _, err := os.Stat(filepath.Join(DownloadsPath, dest+"-"+strconv.Itoa(i))); os.IsNotExist(err) {
 			filenumber = i
 			break
 		}
 	}
 
-	SendToDownloadMessageToLocalPort(dest + "-" + strconv.Itoa(filenumber), hash, dest, g.GetClientAddress().Port, logger)
+	SendToDownloadMessageToLocalPort(dest+"-"+strconv.Itoa(filenumber), hash, dest, g.GetClientAddress().Port, logger)
 }
 
 func writeJsonResponse(w http.ResponseWriter, data interface{}) {
@@ -148,7 +149,6 @@ func StartWebserver(gossiper *Gossiper) {
 	logger = logger.WithField("a", g.GetPeerAddress().String())
 
 	logger.Debug("started web-server thread")
-
 
 	r := mux.NewRouter()
 

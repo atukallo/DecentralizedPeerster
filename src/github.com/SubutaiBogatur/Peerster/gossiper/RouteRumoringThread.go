@@ -20,8 +20,7 @@ func StartRouteRumorsSpreading(gossiper *Gossiper, rtimer int) {
 	SendRouteRumorMessageToLocalPort(gossiper.GetClientAddress().Port, logger)
 
 	for {
-		ticker := time.NewTicker(time.Duration(rtimer) * time.Second)
-		<-ticker.C // wait for the timer to shoot
+		time.Sleep(time.Duration(rtimer) * time.Second)
 
 		SendRouteRumorMessageToLocalPort(gossiper.GetClientAddress().Port, logger)
 	}

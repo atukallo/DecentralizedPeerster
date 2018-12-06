@@ -30,10 +30,17 @@ func (bn *blockNode) containsTransaction(tx *TxPublish) bool {
 }
 
 func (bn *blockNode) getBlockHash() [32]byte {
+	if bn.isFake() {
+		return [32]byte{} // crunch
+	}
 	return bn.block.Hash()
 }
 
 func (bn *blockNode) String() string {
+	if bn.isFake() {
+		return "0" // interesting crunch
+	}
+
 	return bn.block.String()
 }
 

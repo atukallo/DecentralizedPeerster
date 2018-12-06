@@ -1,4 +1,4 @@
-package models
+package utils
 
 type PeersterError struct {
 	ErrorMsg string

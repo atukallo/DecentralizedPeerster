@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	. "github.com/SubutaiBogatur/Peerster/config"
 	. "github.com/SubutaiBogatur/Peerster/gossiper"
 	. "github.com/SubutaiBogatur/Peerster/utils"
 	. "github.com/SubutaiBogatur/Peerster/webserver"
@@ -11,8 +12,7 @@ import (
 	"time"
 )
 
-
-// todo: look for output in fmt.Println & add webserver
+// todo: look for webserver
 // command line arguments
 var (
 	uiport        = flag.Int("UIPort", 4848, "Port, where gossiper listens for client. Client is situated on the same machine, so gossiper listens to "+LocalIp+":port for client")
@@ -57,6 +57,8 @@ func main() {
 	if !*noWebserver {
 		go StartWebserver(g)
 	}
+
+	go g.StartMiningThread()
 
 	g.StartMessageProcessor() // goroutine dies, when app dies, so blocking function is called in main thread
 

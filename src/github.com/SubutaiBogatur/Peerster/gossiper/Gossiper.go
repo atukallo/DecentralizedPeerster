@@ -3,7 +3,9 @@ package gossiper
 import (
 	"encoding/hex"
 	"fmt"
+	. "github.com/SubutaiBogatur/Peerster/config"
 	. "github.com/SubutaiBogatur/Peerster/models"
+	. "github.com/SubutaiBogatur/Peerster/models/blockchain"
 	. "github.com/SubutaiBogatur/Peerster/models/filesearching"
 	. "github.com/SubutaiBogatur/Peerster/models/filesharing"
 	. "github.com/SubutaiBogatur/Peerster/utils"
@@ -42,6 +44,7 @@ import (
 // * file-downloading       thread : thread waits either for DataReply msg from fixed origin or for timeout
 // * search-request-timeout thread : we don't answer the same search-request for some time after we answered it
 // * search-request         thread : the only goroutine, which maintains current search-request: reads search-replies and repeats search-requests with more budget
+// * mining                 thread : all the time, when exists pending tx, tries to generate new block and then publishes it
 
 var (
 	clientMessagesToProcess = make(chan *ClientMessage)
@@ -77,6 +80,7 @@ type Gossiper struct {
 	messageStorage          *MessageStorage          // accessed eg from message-processor and from rumor-mongering, is hard-synchronized
 	sharedFilesManager      *SharedFilesManager      // accessed eg from message-processor and from search-request, is hard-synchronized
 	downloadingFilesManager *DownloadingFilesManager // accessed eg from message-processor and from file-downloading, is soft-synchronized
+	blockchainManager       *BlockchainManager       // accessed eg from message-processor and from mining-thread, is hard-synchronized
 
 	currentSearchRequest *CurrentSearchRequest
 
@@ -94,6 +98,7 @@ func NewGossiper(name string, uiport int, peersAddress string, peers string, isS
 	g.messageStorage = InitMessageStorage(name)
 	g.sharedFilesManager = InitSharedFilesManager(logger)
 	g.downloadingFilesManager = InitDownloadingFilesManager(logger)
+	g.blockchainManager = InitBlockchainManager(logger)
 	g.nextHop = make(map[string]*UDPAddr)
 	g.recentSearchRequests = make(map[string]bool)
 	g.l = logger
@@ -168,6 +173,16 @@ func (g *Gossiper) arePeersEmpty() bool {
 	return len(g.peers) == 0
 }
 
+func (g *Gossiper) sendAllPeers(gp *GossipPacket) {
+	g.peersSliceMux.Lock()
+	defer g.peersSliceMux.Unlock()
+
+	for _, p := range g.peers {
+		agp := &AddressedGossipPacket{Packet: gp, Address: p}
+		peerMessagesToSend <- agp
+	}
+}
+
 func (g *Gossiper) GetPeersCopy() []*UDPAddr {
 	g.peersSliceMux.Lock()
 	defer g.peersSliceMux.Unlock()
@@ -211,7 +226,7 @@ func (g *Gossiper) GetOriginsCopy() *[]string {
 
 	origins := make([]string, 0, len(g.nextHop))
 	for k := range g.nextHop {
-		origins = append(origins, k)
+		origins = append(origins, k) // todo: len + append, seems like bug
 	}
 
 	sort.Strings(origins)
@@ -346,17 +361,32 @@ func (g *Gossiper) StartAntiEntropyTimer() {
 	g.l.Info("starting anti-entropy timer thread")
 
 	for {
-		ticker := time.NewTicker(AntiEntropyTimeout)
-		<-ticker.C // wait for the timer to shoot
+		time.Sleep(AntiEntropyTimeout)
 
 		if g.arePeersEmpty() {
-			<-time.NewTicker(AntiEntropyTimeout * 5).C // wait additional time
+			time.Sleep(AntiEntropyTimeout * 5) // wait additional time
 			continue
 		}
 
 		// send status to a random peer
 		peer := g.getRandomPeer()
 		peerMessagesToSend <- &AddressedGossipPacket{Address: peer, Packet: &GossipPacket{Status: g.messageStorage.GetCurrentStatusPacket()}}
+	}
+}
+
+func (g *Gossiper) StartMiningThread() {
+	g.l.Info("starting mining thread")
+
+	for {
+		g.l.Info("starting mining new block..")
+		newblock, timeMining := g.blockchainManager.DoMining()
+
+		// just for a homework to increase number of blocks & forks, sleep before publishing the block and continuing
+		time.Sleep(2 * timeMining)
+
+		gp := &GossipPacket{BlockPublish: &BlockPublish{Block: *newblock, HopLimit: BlockchainBlockPublishHopLimit}}
+		g.l.Info("sending new block to everyone")
+		g.sendAllPeers(gp)
 	}
 }
 
@@ -413,7 +443,7 @@ func (g *Gossiper) processClientMessage(cmsg *ClientMessage) {
 		g.processPrivateMessage(pmsg)
 	} else if cmsg.ToShare != nil {
 		g.l.Info("got client to share message")
-		g.sharedFilesManager.ShareFile(cmsg.ToShare.Path)
+		g.processClientToShare(cmsg.ToShare)
 	} else if cmsg.ToDownload != nil {
 		g.l.Info("got client to download message")
 		g.processClientDataRequest(cmsg.ToDownload)
@@ -453,6 +483,12 @@ func (g *Gossiper) processAddressedGossipPacket(agp *AddressedGossipPacket) {
 	} else if gp.SearchReply != nil {
 		g.l.Info("got search reply message")
 		g.processAddressedSearchReply(gp.SearchReply, address)
+	} else if gp.TxPublish != nil {
+		g.l.Info("got tx publish message")
+		g.processTxPublish(gp.TxPublish)
+	} else if gp.BlockPublish != nil {
+		g.l.Info("got block publish message")
+		g.processBlockPublish(gp.BlockPublish)
 	}
 }
 
@@ -665,6 +701,49 @@ func (g *Gossiper) processAddressedSearchReply(srpmsg *SearchReply, address *UDP
 	g.currentSearchRequest.ForwardSearchReply(srpmsg)
 }
 
+func (g *Gossiper) processTxPublish(tx *TxPublish) {
+	isNew := g.blockchainManager.AddTransaction(tx)
+	if isNew {
+		if tx.HopLimit <= 0 {
+			g.l.Info("dropping tx publish, hoplimit reached 0")
+			return
+		}
+		g.sendAllPeers(&GossipPacket{TxPublish: &TxPublish{HopLimit: tx.HopLimit - 1, File: tx.File}})
+	}
+}
+
+func (g *Gossiper) processBlockPublish(bp *BlockPublish) {
+	isNew := g.blockchainManager.AddBlock(&bp.Block)
+	if isNew {
+		if bp.HopLimit <= 0 {
+			g.l.Info("dropping block publish, hoplimit reached 0")
+			return
+		}
+		g.sendAllPeers(&GossipPacket{BlockPublish: &BlockPublish{HopLimit: bp.HopLimit - 1, Block: bp.Block}})
+	}
+}
+
+func (g *Gossiper) processClientToShare(ctsmsg *ClientToShareMessage) {
+	name, metafileHash, size := g.sharedFilesManager.ShareFile(ctsmsg.Path)
+
+	if name == nil || metafileHash == nil || size == nil {
+		g.l.Warn("while sharing an error occured, thus tx not formed")
+		return
+	}
+
+	f := File{Name: *name, MetafileHash: (*metafileHash)[:], Size: int64(*size)}
+	tx := &TxPublish{File: f, HopLimit: BlockchainTxHopLimit}
+
+	isAllowed := g.blockchainManager.AddTransaction(tx)
+	if !isAllowed {
+		g.l.Warn("file shared, but name cannot be reserved, because it's already reserved in blockchain")
+		return
+	}
+
+	g.l.Info("new transaction from file-sharing added, gossiping the transaction to peers")
+	g.sendAllPeers(&GossipPacket{TxPublish: tx})
+}
+
 func (g *Gossiper) processClientDataRequest(cdrqmsg *ClientToDownloadMessage) {
 	origin := cdrqmsg.Destination
 
@@ -852,7 +931,7 @@ func (g *Gossiper) startFileDownloadingGoroutine(origin string, latestRequestedH
 	ticker := time.NewTicker(FileDownloadReplyTimeout)
 	timeoutsLimit := FileDownloadTimeoutsLimit
 
-	for true {
+	for {
 		select {
 		case <-ticker.C:
 			g.l.Debug("timeout in file-downloading shot")

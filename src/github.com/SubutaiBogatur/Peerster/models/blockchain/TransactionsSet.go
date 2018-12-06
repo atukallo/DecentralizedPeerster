@@ -59,7 +59,7 @@ func (ts *TransactionsSet) subtract(other *TransactionsSet) {
 }
 
 func (ts *TransactionsSet) getSliceCopy() []TxPublish {
-	ret := make([]TxPublish, len(ts.s))
+	ret := make([]TxPublish, 0)
 	for _, tx := range ts.s {
 		ret = append(ret, *tx)
 	}
