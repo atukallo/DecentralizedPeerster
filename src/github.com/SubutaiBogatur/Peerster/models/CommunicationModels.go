@@ -198,11 +198,13 @@ func (agp *AddressedGossipPacket) Print() bool {
 		pmsg := gp.Private
 		fmt.Println("PRIVATE origin " + pmsg.Origin + " hop-limit " + fmt.Sprint(pmsg.HopLimit) + " contents " + pmsg.Text)
 	} else if gp.DataReply != nil {
-		drpmsg := gp.DataReply
-		fmt.Println("REPLY origin " + drpmsg.Origin + " hash " + hex.EncodeToString(drpmsg.HashValue[:]))
+		//drpmsg := gp.DataReply
+		//fmt.Println("REPLY origin " + drpmsg.Origin + " hash " + hex.EncodeToString(drpmsg.HashValue[:]))
+		return false
 	} else if gp.DataRequest != nil {
-		drqmsg := gp.DataRequest
-		fmt.Println("REQUEST destination " + drqmsg.Destination + " hash " + hex.EncodeToString(drqmsg.HashValue[:]))
+		//drqmsg := gp.DataRequest
+		//fmt.Println("REQUEST destination " + drqmsg.Destination + " hash " + hex.EncodeToString(drqmsg.HashValue[:]))
+		return false
 	} else {
 		return false // never should happen
 	}
