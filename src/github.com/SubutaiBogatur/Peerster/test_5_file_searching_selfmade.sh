@@ -134,7 +134,7 @@ sleep 1
 echo "Okay, searching should have been finished on br"
 
 ./client/client -UIPort="$brUIPort" -file="$brSearchedDownloadedFileName" -request="$fileHash"
-sleep 1
+sleep 2
 echo "Okay, downloading should have been finished on br"
 
 if [ -z "$(diff _SharedFiles/$sharedFileName _Downloads/$brSearchedDownloadedFileName 2>&1)" ]; then # err moved to out
@@ -143,8 +143,7 @@ if [ -z "$(diff _SharedFiles/$sharedFileName _Downloads/$brSearchedDownloadedFil
     echo -e "${GREEN}***MY CONGRATULATIONS SIR***${NC}"
 else
     echo -e "${RED}***FAILED***${NC}"
-    echo "Bad output is: $(diff _SharedFiles/$sharedFileName _Downloads/br-$blDownloadedFileName 2>&1)"
-    echo "Or: $(diff _SharedFiles/$sharedFileName _Downloads/br-$trDownloadedFileName 2>&1)"
+    echo "Bad output is: $(diff _SharedFiles/$sharedFileName _Downloads/$brSearchedDownloadedFileName 2>&1)"
 fi
 
 echo "Kill all the peerster processes..."

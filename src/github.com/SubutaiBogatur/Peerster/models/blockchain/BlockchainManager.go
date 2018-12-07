@@ -151,7 +151,6 @@ func (bm *BlockchainManager) DoMining() (*Block, Duration) {
 			continue
 		}
 
-
 		nonceSlice := make([]byte, 32)
 		rand.Read(nonceSlice)
 
@@ -239,5 +238,5 @@ func (bm *BlockchainManager) printBlocksMap() {
 		str += "\n"
 	}
 
-	bm.l.Debug(str)
+	//bm.l.Debug(str)
 }
