@@ -40,6 +40,7 @@ func (bm *BlockchainManager) AddBlock(block *Block) bool {
 	// 3.2.1) if chain becomes longest after appending, rollback current history & apply new history & calculate new pendingTransactions set
 	// 3.2.2) if chain remains short, do nothing
 	bm.m.Lock()
+	defer bm.printBlocksMap()
 	defer bm.m.Unlock()
 
 	if _, ok := bm.blocks[block.Hash()]; ok {
@@ -53,7 +54,7 @@ func (bm *BlockchainManager) AddBlock(block *Block) bool {
 	}
 
 	if !block.IsGood() {
-		bm.l.Warn("block is malicious, its hash is not good, block: " + block.String())
+		bm.l.Warn("block is malicious, its hash is not good, block: "+block.String()+" ", block.Transactions, block.PrevHash, block.Nonce)
 		return false
 	}
 
@@ -142,6 +143,7 @@ func (bm *BlockchainManager) DoMining() (*Block, Duration) {
 	start := Now()
 
 	// mining is done very often, so not taking lock every time, but only when possibly good block found, when decide to finally check it
+	// there is a potential danger of simultaneous iteration & editing, which may cause fail, it can be avoided with taking lock every time
 	for {
 		if bm.pendingTx.isEmpty() {
 			sleepTimes++
@@ -186,6 +188,7 @@ func (bm *BlockchainManager) DoMining() (*Block, Duration) {
 		bm.pendingTx.clear()
 		bm.l.Info("added new block to blockhain, now biggest-chain-depth is: " + fmt.Sprint(bm.tail.depth))
 		bm.printLongestChain()
+		bm.printBlocksMap()
 		bm.m.Unlock()
 
 		return &newBlock, timeUsed
@@ -211,4 +214,30 @@ func (bm *BlockchainManager) printLongestChain() {
 
 	log.Debug(str)
 	fmt.Println(str)
+}
+
+func (bm *BlockchainManager) printBlocksMap() {
+	// for debug purposes
+	str := "blocks-map\n"
+	for h, b := range bm.blocks {
+		str += hex.EncodeToString(h[:])
+		str += " - "
+		str += b.String()
+		if !b.isFake() {
+			str += " ("
+			for i, tx := range b.block.Transactions {
+				str += tx.File.Name
+				if i != len(b.block.Transactions) - 1 {
+					str += " "
+				}
+			}
+			str += "; " + hex.EncodeToString(b.block.PrevHash[:])
+			str += "; " + hex.EncodeToString(b.block.Nonce[:])
+			str += ") "
+		}
+
+		str += "\n"
+	}
+
+	bm.l.Debug(str)
 }

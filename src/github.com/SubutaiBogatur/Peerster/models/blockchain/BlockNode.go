@@ -1,6 +1,7 @@
 package blockchain
 
 import (
+	"encoding/hex"
 	. "github.com/SubutaiBogatur/Peerster/models"
 )
 
@@ -37,11 +38,8 @@ func (bn *blockNode) getBlockHash() [32]byte {
 }
 
 func (bn *blockNode) String() string {
-	if bn.isFake() {
-		return "0" // interesting crunch
-	}
-
-	return bn.block.String()
+	h := bn.getBlockHash()
+	return hex.EncodeToString(h[:])
 }
 
 // returns correct answer only if answer exists, else not guaranteed, but not fails
