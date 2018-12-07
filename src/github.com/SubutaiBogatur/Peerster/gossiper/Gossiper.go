@@ -287,9 +287,9 @@ func (g *Gossiper) sendPacketWithNextHop(origin string, gp *GossipPacket) {
 // client-reader thread
 func (g *Gossiper) StartClientReader() {
 	g.l.Info("starting reading bytes on client: " + g.clientAddress.String() + " thread")
-	var buffer = make([]byte, MaxPacketSize)
 
 	for {
+		buffer := make([]byte, MaxPacketSize)
 		g.clientConnection.ReadFromUDP(buffer)
 
 		cmsg := &ClientMessage{}
@@ -308,9 +308,15 @@ func (g *Gossiper) StartClientReader() {
 // peer-reader thread
 func (g *Gossiper) StartPeerReader() {
 	g.l.Info("gossiper " + g.name.Load().(string) + ": starting reading bytes on peer: " + g.peersAddress.String() + " in new thread")
-	var buffer = make([]byte, MaxPacketSize)
 
 	for {
+		buffer := make([]byte, MaxPacketSize)
+		// here was a terrible bug
+		// before buffer was initalized outside the for-loop, then very strange problems were encountered
+		// thanks to akashuba it was understood, that protobuf, when doing Decoding, saves in inner structures
+		// pointers to buffer. Eg structures somewhere have slices and these slices are not copies of buffer, but pointers
+		// to buffer. As a result, with new message arriving, all the previous structures broke down. Now buffer
+		// is initialized inside and every iteration it's a new variable, which will never be spoiled later
 		_, addr, _ := g.peersConnection.ReadFromUDP(buffer)
 
 		gp := &GossipPacket{}
@@ -487,7 +493,7 @@ func (g *Gossiper) processAddressedGossipPacket(agp *AddressedGossipPacket) {
 		g.l.Info("got tx publish message")
 		g.processTxPublish(gp.TxPublish)
 	} else if gp.BlockPublish != nil {
-		g.l.Info("got block publish message")
+		g.l.Info("got block publish message, block: " + gp.BlockPublish.Block.String())
 		g.processBlockPublish(gp.BlockPublish)
 	}
 }
