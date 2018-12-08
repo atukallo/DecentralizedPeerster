@@ -100,3 +100,15 @@ func (csr *CurrentSearchRequest) Shutdown() {
 
 	csr.isAlive = false
 }
+
+func (csr *CurrentSearchRequest) GetFullMatches() []string {
+	csr.mux.Lock()
+	defer csr.mux.Unlock()
+
+	ret := make([]string, 0)
+	for _, match := range csr.fullMatches {
+		ret = append(ret, match.Filename)
+	}
+
+	return ret
+}

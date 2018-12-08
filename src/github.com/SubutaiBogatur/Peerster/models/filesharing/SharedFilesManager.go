@@ -9,6 +9,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 )
 
@@ -100,4 +101,17 @@ func (sfm *SharedFilesManager) GetSearchResults(keywords []string) []*SearchResu
 	}
 
 	return searchResults
+}
+
+func (sfm *SharedFilesManager) GetSharedFilesList() []string {
+	sfm.mux.Lock()
+	defer sfm.mux.Unlock()
+
+	ret := make([]string, 0)
+	for _, sf := range sfm.sharedFiles {
+		ret = append(ret, sf.Name + " - " + hex.EncodeToString(sf.MetaHash[:]))
+	}
+
+	sort.Strings(ret)
+	return ret
 }

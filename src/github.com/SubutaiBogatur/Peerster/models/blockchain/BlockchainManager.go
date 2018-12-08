@@ -13,16 +13,17 @@ import (
 )
 
 type BlockchainManager struct {
-	tail      *blockNode              // tail of the longest chain in the tree
-	blocks    map[[32]byte]*blockNode // block_hash -> ptr to node in the tree
-	pendingTx *TransactionsSet
+	tail           *blockNode              // tail of the longest chain in the tree
+	blocks         map[[32]byte]*blockNode // block_hash -> ptr to node in the tree
+	pendingTx      *TransactionsSet
+	noParentBlocks map[[32]byte]*Block // blocks here are waiting for parent to arrive
 
 	m sync.Mutex
 	l *log.Entry // logger
 }
 
 func InitBlockchainManager(l *log.Entry) *BlockchainManager {
-	bm := &BlockchainManager{l: l, blocks: make(map[[32]byte]*blockNode), pendingTx: InitEmpty()}
+	bm := &BlockchainManager{l: l, blocks: make(map[[32]byte]*blockNode), pendingTx: InitEmpty(), noParentBlocks: make(map[[32]byte]*Block)}
 
 	bm.tail = InitFakeBlockNode()
 	bm.blocks[bm.tail.getBlockHash()] = bm.tail // a bit dangerous, because real hash is not zeroes
@@ -48,24 +49,51 @@ func (bm *BlockchainManager) AddBlock(block *Block) bool {
 		return false
 	}
 
-	if _, ok := bm.blocks[block.PrevHash]; !ok {
-		bm.l.Warn("parent of block isn't known, block: " + block.String())
-		return false
-	}
-
 	if !block.IsGood() {
 		bm.l.Warn("block is malicious, its hash is not good, block: "+block.String()+" ", block.Transactions, block.PrevHash, block.Nonce)
 		return false
 	}
 
+	if _, ok := bm.blocks[block.PrevHash]; !ok {
+		bm.l.Warn("parent of block isn't known, block: " + block.String())
+		bm.l.Info("block is added in waiting list..")
+		bm.noParentBlocks[block.Hash()] = block
+		return false
+	}
+
 	// so, is good and is new, let's append to the tree
+	bm.appendToTheTree(block)
+
+	for bm.checkPendingBlocks() {
+		// repeat until something changes, can be optimized for better asymptotics (linear vs current square), but lazy
+	}
+
+	return true
+}
+
+func (bm *BlockchainManager) checkPendingBlocks() bool {
+	changed := false
+	for hash, block := range bm.noParentBlocks {
+		if _, ok := bm.blocks[hash]; !ok {
+			continue
+		}
+		bm.l.Info("block has found it's parent! block, ", block.String())
+		delete(bm.noParentBlocks, hash) // safe to iterate & delete
+		bm.appendToTheTree(block)
+		changed = true
+	}
+
+	return changed
+}
+
+func (bm *BlockchainManager) appendToTheTree(block *Block) {
 	if block.PrevHash == bm.tail.getBlockHash() {
 		bm.l.Info("block prolongs longest chain, good, block: " + block.String())
 		bm.tail = InitBlockNode(bm.tail, block)
 		bm.blocks[block.Hash()] = bm.tail
 		bm.pendingTx.subtract(bm.tail.txSet)
 		bm.printLongestChain()
-		return true
+		return
 	}
 
 	parentNode := bm.blocks[block.PrevHash]
@@ -74,7 +102,7 @@ func (bm *BlockchainManager) AddBlock(block *Block) bool {
 		bm.l.Info("block prolongs short chain, block: " + block.String())
 		bm.blocks[block.Hash()] = InitBlockNode(parentNode, block)
 		fmt.Println("FORK-SHORTER " + block.String())
-		return true
+		return
 	}
 
 	bm.l.Info("block prolongs short chain, which become longest, reapplying history..., block: " + block.String())
@@ -95,8 +123,6 @@ func (bm *BlockchainManager) AddBlock(block *Block) bool {
 		bm.pendingTx.subtract(curBlock.txSet)
 	}
 	bm.printLongestChain()
-
-	return true
 }
 
 // returns true if new & correct transaction
@@ -132,7 +158,13 @@ func (bm *BlockchainManager) AddTransaction(tx *TxPublish) bool {
 	bm.pendingTx.add(tx)
 	bm.l.Info("transaction added to pending set")
 	return true
+}
 
+func (bm *BlockchainManager) GetBlockNumber() int {
+	bm.m.Lock()
+	defer bm.m.Unlock()
+
+	return len(bm.blocks) - 1 // not counting fake block
 }
 
 // is called from distinct thread
@@ -226,7 +258,7 @@ func (bm *BlockchainManager) printBlocksMap() {
 			str += " ("
 			for i, tx := range b.block.Transactions {
 				str += tx.File.Name
-				if i != len(b.block.Transactions) - 1 {
+				if i != len(b.block.Transactions)-1 {
 					str += " "
 				}
 			}
