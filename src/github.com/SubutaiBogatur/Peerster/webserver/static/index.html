@@ -54,6 +54,15 @@ DISCLAIMER: I don't like frontend and thus it's bad and ugly. Please have a look
         <h3>shared files</h3>
         <input type="text" id="shared-file-input" placeholder="File to share.."/>
         <button id="share-file-button">Share file</button>
+
+        <ul id="shared-files-list"></ul>
+
+        <h3>searching</h3>
+        <input type="text" id="search-input" placeholder="Keywords to search separated by coma.."/>
+        <button id="search-button">Search keywords</button>
+        <button id="download-search-button">Download found file</button>
+
+        <ul id="search-matches-list"></ul>
     </div>
 
 </div>
@@ -69,9 +78,11 @@ DISCLAIMER: I don't like frontend and thus it's bad and ugly. Please have a look
     document.getElementById("send-private-message-button").onclick = sendPrivateMessageOnClick;
     document.getElementById("request-file-button").onclick = callRequestFile;
     document.getElementById("share-file-button").onclick = callShareFile;
+    document.getElementById("search-button").onclick = callSearch;
+    document.getElementById("download-search-button").onclick = callDownloadFound;
 
     updateAllFields();
-    var timer = setInterval(updateAllFields, 1000 * 10); // update everything once in timeout
+    var timer = setInterval(updateAllFields, 1000 * 1); // update everything once in timeout
 
     function jqueryAjaxGet(url, success) {
         jQuery.ajax({
@@ -96,6 +107,8 @@ DISCLAIMER: I don't like frontend and thus it's bad and ugly. Please have a look
         callGetPeers();
         callGetMessages();
         callGetOrigins();
+        callGetSharedFiles();
+        callGetSearchMatches();
     }
 
     function sendRumorMessageOnClick() {
@@ -180,6 +193,45 @@ DISCLAIMER: I don't like frontend and thus it's bad and ugly. Please have a look
         jqueryAjaxGet("/getPeers", gotPeers);
     }
 
+    function callGetSharedFiles() {
+        function gotSharedFiles(sharedFiles, status, dunno) {
+            list = document.getElementById("shared-files-list");
+            while (list.hasChildNodes()) {
+                list.removeChild(list.firstChild)
+            }
+            var i;
+            for (i = 0; i < sharedFiles.length; i++) {
+                list.appendChild(document.createTextNode(sharedFiles[i]));
+                list.appendChild(document.createElement("br"));
+            }
+        }
+
+        jqueryAjaxGet("/getSharedFiles", gotSharedFiles);
+    }
+
+    function callGetSearchMatches() {
+        function gotSearchMatches(searchMatches, status, dunno) {
+            list = document.getElementById("search-matches-list");
+            while (list.hasChildNodes()) {
+                list.removeChild(list.firstChild)
+            }
+            var i;
+            var radioHtmlTemplate = '<input type="radio" name="matches" ';
+            for (i = 0; i < searchMatches.length; i++) {
+                var radioHtml = radioHtmlTemplate + 'value="' + searchMatches[i] + '"/>' + " " + searchMatches[i];
+                var li = document.createElement('li');
+                li.innerHTML = radioHtml;
+                list.appendChild(li);
+            }
+        }
+
+        if (document.querySelector('input[name="matches"]:checked') != null) {
+            return; // if something is chosen, let's not update not to discard
+        }
+
+        jqueryAjaxGet("/getSearchMatches", gotSearchMatches);
+    }
+
     function callAddPeer() {
         var newPeer = document.getElementById("peer-input").value;
         jqueryAjaxPost("/addPeer", newPeer);
@@ -253,6 +305,25 @@ DISCLAIMER: I don't like frontend and thus it's bad and ugly. Please have a look
         var filename = document.getElementById("shared-file-input").value;
         jqueryAjaxPost("/shareFile", filename);
         document.getElementById("shared-file-input").value = "";
+        callGetSharedFiles();
+    }
+
+    function callSearch() {
+        var keywords = document.getElementById("search-input").value;
+        jqueryAjaxPost("/search", keywords);
+        document.getElementById("search-input").value = "";
+        callGetSearchMatches();
+    }
+
+    function callDownloadFound() {
+        if (document.querySelector('input[name="matches"]:checked') == null) {
+            console.log("nothing is chosen!");
+            return; // nothing is chosen
+        }
+
+        var chosen_value = document.querySelector('input[name="matches"]:checked').value;
+        jqueryAjaxPost("/downloadFound", chosen_value);
+        document.querySelector('input[name="matches"]:checked').checked = false;
     }
 
 

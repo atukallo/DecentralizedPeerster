@@ -114,6 +114,10 @@ func shareFile(w http.ResponseWriter, r *http.Request) {
 	SendToShareMessageToLocalPort(path, g.GetClientAddress().Port, logger)
 }
 
+func getSharedFiles(w http.ResponseWriter, r *http.Request) {
+	writeJsonResponse(w, g.GetSharedFiles())
+}
+
 func requestFile(w http.ResponseWriter, r *http.Request) {
 	logger.Debug("post: request file")
 	body, err := ioutil.ReadAll(r.Body)
@@ -133,6 +137,28 @@ func requestFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	SendToDownloadMessageToLocalPort(dest+"-"+strconv.Itoa(filenumber), hash, dest, g.GetClientAddress().Port, logger)
+}
+
+func search(w http.ResponseWriter, r *http.Request) {
+	logger.Debug("post: search")
+	body, err := ioutil.ReadAll(r.Body)
+	CheckError(err, logger)
+
+	keywords := strings.Split(string(body), ",") // terrible, sorry
+	SendToSearchMessaageToLocalPort(keywords, 0, g.GetClientAddress().Port, logger)
+}
+
+func downloadFound(w http.ResponseWriter, r *http.Request) {
+	logger.Debug("post: download found")
+	body, err := ioutil.ReadAll(r.Body)
+	CheckError(err, logger)
+
+	name := string(body)
+	g.DownloadFoundByName(name)
+}
+
+func getSearchMatches(w http.ResponseWriter, r *http.Request) {
+	writeJsonResponse(w, g.GetFullSearchMatches())
 }
 
 func writeJsonResponse(w http.ResponseWriter, data interface{}) {
@@ -162,7 +188,11 @@ func StartWebserver(gossiper *Gossiper) {
 	r.Methods("POST").Subrouter().HandleFunc("/sendPrivateMessage", sendPrivateMessage)
 	r.Methods("GET").Subrouter().HandleFunc("/getMessages", getMessages)
 	r.Methods("POST").Subrouter().HandleFunc("/shareFile", shareFile)
+	r.Methods("GET").Subrouter().HandleFunc("/getSharedFiles", getSharedFiles)
 	r.Methods("POST").Subrouter().HandleFunc("/requestFile", requestFile)
+	r.Methods("POST").Subrouter().HandleFunc("/search", search)
+	r.Methods("GET").Subrouter().HandleFunc("/getSearchMatches", getSearchMatches)
+	r.Methods("POST").Subrouter().HandleFunc("/downloadFound", downloadFound)
 
 	r.Handle("/", http.FileServer(http.Dir("./webserver/static"))) // relative path for main.go
 

@@ -234,6 +234,22 @@ func (g *Gossiper) GetOriginsCopy() *[]string {
 	return &origins
 }
 
+func (g *Gossiper) GetSharedFiles() []string {
+	return g.sharedFilesManager.GetSharedFilesList()
+}
+
+// returns matches for previous search request
+func (g *Gossiper) GetFullSearchMatches() []string {
+	if g.currentSearchRequest == nil {
+		return make([]string, 0)
+	}
+	return g.currentSearchRequest.GetFullMatches()
+}
+
+func (g *Gossiper) DownloadFoundByName(name string) {
+	g.currentSearchRequest.DownloadFileByName(name, name)
+}
+
 func (g *Gossiper) GetName() string {
 	return g.name.Load().(string)
 }
@@ -386,9 +402,14 @@ func (g *Gossiper) StartMiningThread() {
 	for {
 		g.l.Info("starting mining new block..")
 		newblock, timeMining := g.blockchainManager.DoMining()
-
-		// just for a homework to increase number of blocks & forks, sleep before publishing the block and continuing
-		time.Sleep(2 * timeMining)
+		if g.blockchainManager.GetBlockNumber() == 1 {
+			// then mined block is the first one, hw asks us to sleep more (for fun with pending blocks)
+			g.l.Info("sleeping more after first block is mined")
+			time.Sleep(5 * time.Second)
+		} else {
+			// just for a homework to increase number of blocks & forks, sleep before publishing the block and continuing
+			time.Sleep(2 * timeMining)
+		}
 
 		gp := &GossipPacket{BlockPublish: &BlockPublish{Block: *newblock, HopLimit: BlockchainBlockPublishHopLimit}}
 		g.l.Info("sending new block to everyone")
