@@ -2,6 +2,7 @@
 build/
 pkg
 *.out
+*.tar.gz
 
 src/github.com/SubutaiBogatur/Peerster/Peerster
 src/github.com/SubutaiBogatur/Peerster/client/client
