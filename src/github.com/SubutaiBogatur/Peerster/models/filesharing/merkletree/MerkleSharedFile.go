@@ -3,12 +3,15 @@ package merkletree
 import (
 	"crypto/sha256"
 	. "github.com/SubutaiBogatur/Peerster/config"
+	. "github.com/SubutaiBogatur/Peerster/models"
 	. "github.com/SubutaiBogatur/Peerster/utils"
 	log "github.com/sirupsen/logrus"
 	"io"
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 )
 
 type MerkleSharedFile struct {
@@ -24,7 +27,7 @@ type MerkleSharedFile struct {
 	NodeSet  map[[32]byte]*merkleNode // hash -> node
 }
 
-func SshareFile(path string) *MerkleSharedFile {
+func ShareMerkleFile(path string) *MerkleSharedFile {
 	path, err := filepath.Abs(path)
 	if CheckErr(err) {
 		return nil
@@ -118,4 +121,48 @@ func SshareFile(path string) *MerkleSharedFile {
 	sharedFile.NodeSet = nodeset
 
 	return &sharedFile
+}
+
+func (sf *MerkleSharedFile) ChunkBelongsToFile(chunkHash [32]byte) bool {
+	_, ok := sf.NodeSet[chunkHash]
+	return ok
+}
+
+func (sf *MerkleSharedFile) GetChunk(hashValue [32]byte) []byte {
+	if !sf.ChunkBelongsToFile(hashValue) {
+		return nil
+	}
+
+	chunkPath := filepath.Join(SharedFilesChunksPath, sf.Name, GetMerkleChunkFileName(hashValue))
+	if _, err := os.Stat(chunkPath); os.IsNotExist(err) {
+		log.Error("existing chunk cannot be found!!!")
+		return nil
+	}
+
+	chunkBytes, err := ioutil.ReadFile(chunkPath)
+	if CheckErr(err) {
+		return nil
+	}
+
+	return chunkBytes
+}
+
+func (sf *MerkleSharedFile) GetSearchResults(keywords []string) []*SearchResult {
+	searchResults := make([]*SearchResult, 0)
+
+	for _, kw := range keywords {
+		if res, err := regexp.MatchString(".*"+kw+".*", sf.Name); err == nil && res {
+			log.Info("merkle shared file " + sf.Name + " matches search request " + strings.Join(keywords, ","))
+			searchResult := &SearchResult{FileName: sf.Name, MetafileHash: sf.RootNode.HashValue[:], ChunkCount: uint64(len(sf.NodeSet))}
+			chunkMap := make([]uint64, len(sf.NodeSet))
+			for i := 1; i <= len(sf.NodeSet); i++ {
+				chunkMap[i-1] = uint64(i)
+			}
+			searchResult.ChunkMap = chunkMap
+
+			searchResults = append(searchResults, searchResult)
+		}
+	}
+
+	return searchResults
 }

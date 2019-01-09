@@ -12,7 +12,6 @@ import (
 	"time"
 )
 
-// todo: look for webserver
 // command line arguments
 var (
 	uiport        = flag.Int("UIPort", 4848, "Port, where gossiper listens for client. Client is situated on the same machine, so gossiper listens to "+LocalIp+":port for client")

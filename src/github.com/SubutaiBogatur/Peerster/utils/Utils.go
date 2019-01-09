@@ -40,6 +40,10 @@ func GetChunkFileName(hashValue [32]byte) string {
 	return hex.EncodeToString(hashValue[:]) + ".chunk"
 }
 
+func GetMerkleChunkFileName(hashValue [32]byte) string {
+	return hex.EncodeToString(hashValue[:]) + ".merkle"
+}
+
 func GetMetafileName(hashValue [32]byte) string {
 	return hex.EncodeToString(hashValue[:]) + ".metafile"
 }

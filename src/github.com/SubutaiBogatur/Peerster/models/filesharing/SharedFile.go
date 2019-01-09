@@ -14,6 +14,7 @@ import (
 	"strings"
 )
 
+// deprecated, use merkleSharedFile
 type sharedFile struct {
 	// chunks by itself are stored in _SharedFiles/{Name}/{Hash as hex string}.chunk on disk
 
