@@ -34,3 +34,5 @@ blockchain is introduced. Every time a new file is being shared, the node issues
 spread all over the network. At the same time every node is constantly mining new blocks. When the block with valid hash (ie havinig some prefix of 0-bits) is mined, all pending transactions are included there and then block is spread all over the network with every node checking block's **proof-of-work**. The longest block chain the node has is considered an official history. The mechanism to resolve block chain forks is also introduced. When transaction is in the longest chain, filename is officially reserved for a given origin and given metahash and file-download requests can be sent directly to origin found in the blockchain without
 doing search.
 
+If interested, see header in [Gossiper.go](src/github.com/SubutaiBogatur/Peerster/gossiper/Gossiper.go) file for more information and sketch of program architecture.
+
